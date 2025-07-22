@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import folium
 from tqdm import tqdm
-import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 
 def calc_dist(lat1, lon1, lat2, lon2):
@@ -34,22 +34,23 @@ def create_map(df):
     lon = df['LON'][:]
     u10 = df['u10'][:] if 'u10' in df.columns else None
     v10 = df['v10'][:] if 'v10' in df.columns else None
-
+    print(df)
 
     # Create a map centered around the first coordinate
     m = folium.Map(location=[lat.iloc[0], lon.iloc[0]], zoom_start=12)
     # Add the trajectory to the map
+    i = 0
     for lat, lon in zip(lat, lon):
         tooltip = None
 
         if u10 is not None and v10 is not None:
             tooltip = f"u10: {u10.iloc[i]:.2f} m/s<br>v10: {v10.iloc[i]:.2f} m/s"
         folium.CircleMarker(location=[lat, lon], radius=1, color='blue', tooltip=tooltip).add_to(m)
-
+        i += 1
     # Save the map to an HTML file
     m.save(f'trajectory_map_suez_v2.html')
 
-def get_wind_properties(i, df, ds, vs_ms, tempo_atual):
+def get_wind_properties(i, vs_ms, tempo_atual):
     lat1, lon1 = df.loc[i, "LAT"], df.loc[i, "LON"]
     lat2, lon2 = df.loc[i+1, "LAT"], df.loc[i+1, "LON"]
     diff = (df.loc[i+1, "Data"] - df.loc[i, "Data"]).total_seconds()
@@ -89,13 +90,13 @@ def get_wind_properties(i, df, ds, vs_ms, tempo_atual):
     # print()
     # print("Time: ", time.process_time() - t_begin)
 
-
-    return u10_final, v10_final, ang_vento
+    return np.array([u10_final, v10_final, ang_vento])
 
 if __name__ == "__main__":
+
+    print("[INFO] Reading dataset")
     ds = xr.open_dataset("2024/2024.grib", engine="cfgrib")
     df = pd.read_csv("rota_suezmax.csv", sep=';')
-
     df["LAT"] = df["LAT"].str.replace(",", ".").astype(float)
     df["LON"] = df["LON"].str.replace(",", ".").astype(float)
     df["Data"] = pd.to_datetime(df["Data"].str.strip())
@@ -103,34 +104,41 @@ if __name__ == "__main__":
     vs_kns = 12 # Knots
     vs_ms = vs_kns / 1.94384
     tempo_atual = pd.Timestamp("2024-01-01 00:00:00")
-
-    # Entre 0 a 8784
     stamp_vento = 0
-
-    map_range = np.arange(4000, 5000, 1)
-    ang_vento = np.zeros(map_range.shape)
+    total_range = np.arange(10000, 10200)
+    
 
     def wrapper(i):
-        return get_wind_properties(i, df, ds, vs_ms, tempo_atual)
+        return get_wind_properties(i, vs_ms, tempo_atual)
     
     t_begin = time.process_time()
+    ang_vento = np.zeros(total_range.shape)
+    u10 = np.zeros(total_range.shape)
+    v10 = np.zeros(total_range.shape)
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
-        results = tqdm(executor.map(wrapper, range(map_range[0], map_range[-1])),
-                            total=map_range.shape[0], desc="[INFO] Calculating velocities")
-    import pdb;pdb.set_trace()
-    u10 = np.zeros(results.shape[0])
-    v10 = np.zeros(results.shape[0])
-    
-    for i, res in enumerate(results):
-        u10[i] = res[0]
-        v10[i] = res[1]
-        ang_vento[i] = res[2]
 
-    df = df.loc[map_range]
-    df['u10'] = u10
-    df['v10'] = u10
-    
+    parallel = False
+    if not parallel:
+        for j, i in enumerate(tqdm(total_range)):
+            res = get_wind_properties(i, vs_ms, tempo_atual)
+            u10[j] = res[0] 
+            v10[j] = res[1]
+            ang_vento[j] = res[2]
+    else:
+        with ThreadPoolExecutor(max_workers=32) as executor:
+            futures = [executor.submit(get_wind_properties, i, vs_ms, tempo_atual) for i in total_range]
+            for i, future in enumerate(tqdm(futures)):
+                res = future.result()
+                u10[i] = res[0]
+                v10[i] = res[1]
+                ang_vento[i] = res[2]
+                
+    new_df = df.loc[total_range]
+    new_df['u10'] = u10
+    new_df['v10'] = u10
+    new_df['angulo_vento'] = ang_vento
     print("[INFO] Ploting Map..")  
-    create_map(df)
+    create_map(new_df)
     
+    print(f"[INFO] Saving informations with start time: {tempo_atual} ..")
+    new_df.to_csv(f'infos_hour{tempo_atual.hour}_min{tempo_atual.minute}_sec{tempo_atual.hour}.csv')
