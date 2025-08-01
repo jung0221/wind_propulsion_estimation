@@ -9,22 +9,24 @@ import time
 import threading
 
 class ProcessMap:
-    def __init__(self, timestamp, route_path, wind_path):
+    def __init__(self, timestamp, route_path, wind_path, forces_path):
         self.timestamp = timestamp
         self.route_path = route_path
         self.wind_path = wind_path
+        self.forces_path = forces_path
+        
         self._lock = threading.Lock()  # Add thread lock
         self.lat = 0
         self.lon = 0
         vs_kns = 12 # Knots
         self.vs_ms = vs_kns / 1.94384
-        
 
     def load_data(self):
         
         print("[INFO] Reading dataset")
         self.ds = xr.open_dataset(self.wind_path, engine="cfgrib")
         self.df = pd.read_csv(self.route_path, sep=';')
+
 
         self.df["LAT"] = self.df["LAT"].str.replace(",", ".").astype(float)
         self.df["LON"] = self.df["LON"].str.replace(",", ".").astype(float)
@@ -201,7 +203,8 @@ class ProcessMap:
 
         self.new_df['u_rel'] = self.new_df['u_ship'] + self.new_df['u10']
         self.new_df['v_rel'] = self.new_df['v_ship'] + self.new_df['v10']
-        self.new_df['angle_rel'] = np.degrees(np.arctan2(self.new_df['v_rel'], -self.new_df['u_rel']))
+        theta = np.degrees(np.arctan2(self.new_df['v_rel'], -self.new_df['u_rel']))
+        self.new_df['angle_rel'] = (theta*180/np.pi + 360) % 360
 
     def process_per_route(self):
         
@@ -219,23 +222,27 @@ class ProcessMap:
 
         
     def save_map(self, timestamp):
-        print("[INFO] Ploting Map..")  
 
-        self.create_map()
-        self.m.save(f'trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html')
+        if not os.path.exists(f'trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html'):
+            print("[INFO] Ploting Map..")  
+            self.create_map()
+            self.m.save(f'trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html')
+
+    def load_forces(self):
+        self.forces_df = pd.read_csv(self.forces_path)
+        import pdb;pdb.set_trace()
 
 
 if __name__ == "__main__":
 
-    current_time = pd.Timestamp("2020-01-01 00:00:00")
-    for i in range(100):
+    current_time = pd.Timestamp("2020-04-05 04:00:00")
+    for i in range(4000):
         print("Time starts: ", current_time)
-        map_processer = ProcessMap(timestamp=current_time, route_path='rota_suezmax.csv', wind_path='2020/2020.grib')
+        map_processer = ProcessMap(timestamp=current_time, route_path='rota_suezmax.csv', wind_path='2020/2020.grib', forces_path='forces.csv')
         map_processer.load_data()
 
         map_processer.process_per_route()
         map_processer.save_csv(current_time)
         map_processer.save_map(current_time)
-
+        map_processer.load_forces()
         current_time += pd.Timedelta(hours=1)
-        break
