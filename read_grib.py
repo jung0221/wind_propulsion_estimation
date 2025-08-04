@@ -20,19 +20,33 @@ class ProcessMap:
         self.lon = 0
         vs_kns = 12 # Knots
         self.vs_ms = vs_kns / 1.94384
-
+        self.new_df = None
+        self.df = None
+        self.current_month = None
+        self.ds = None  
+        
     def load_data(self):
         
-        print("[INFO] Reading dataset")
+        print("[INFO] Loading wind data")
         self.ds = xr.open_dataset(self.wind_path, engine="cfgrib")
-        self.df = pd.read_csv(self.route_path, sep=';')
+        if self.current_month != self.timestamp.month or self.ds is None:
+            self.current_month = self.timestamp.month
+            # Construct the path for the current month's GRIB file
+            month_wind_path = f"2020/2020_{int(self.current_month)}.grib"  # Adjust path format as needed
+            self.ds = xr.open_dataset(month_wind_path, engine="cfgrib")
+            print(f"[INFO] Loaded wind data for month {self.current_month}")
+        
+
+        if not self.df:
+            print("[INFO] Loading route data")
+            self.df = pd.read_csv(self.route_path, sep=';')
 
 
         self.df["LAT"] = self.df["LAT"].str.replace(",", ".").astype(float)
         self.df["LON"] = self.df["LON"].str.replace(",", ".").astype(float)
         self.df["Data"] = pd.to_datetime(self.df["Data"].str.strip())
-        self.wind_u = np.zeros(8784)
-        self.wind_v = np.zeros(8784)
+        self.wind_u = None
+        self.wind_v = None
 
     def haversine(self, lat1, lon1, lat2, lon2):
         R = 6371e3
@@ -57,8 +71,8 @@ class ProcessMap:
         brng = (theta*180/np.pi + 360) % 360
         return brng
 
-    def wind_dri(self, u, v):
-        return (np.degrees(np.arctan2(-u, -v)) + 360) % 360
+    def wind_dri(self, u10, v10):
+        return np.degrees(np.arctan2(u10, v10)) % 360
 
     def create_map(self):
         lat = self.new_df['LAT'][:]
@@ -123,27 +137,30 @@ class ProcessMap:
         dist = self.haversine(lat1, lon1, lat2, lon2)
         ang_navio = self.bearing(lat1, lon1, lat2, lon2)
 
-        
-        dt = dist/self.vs_ms
-        self.timestamp += pd.Timedelta(seconds=dt)
-        u10_point1 = self.ds.u10.sel(latitude=lat1, longitude=lon1, method="nearest")
-        v10_point1 = self.ds.v10.sel(latitude=lat1, longitude=lon1, method="nearest")
-        # u10_point2 = self.ds.u10.sel(latitude=lat2, longitude=lon2, method="nearest")
-        # v10_point2 = self.ds.v10.sel(latitude=lat2, longitude=lon2, method="nearest")
+        self.dt = dist/self.vs_ms
 
+        if self.current_month != self.timestamp.month:
+            self.current_month = self.timestamp.month
+            month_wind_path = f"2020/2020_{int(self.current_month)}.grib"  # Adjust path format as needed
+            self.ds = xr.open_dataset(month_wind_path, engine="cfgrib")
+            print(f"[INFO] Loaded new wind data for month {self.current_month}")
+        
+        u10_point = self.ds.u10.sel(latitude=lat1, longitude=lon1, method="nearest")
+        v10_point = self.ds.v10.sel(latitude=lat1, longitude=lon1, method="nearest")
+        
         try:
-            u10_final = u10_point1.sel(time=self.timestamp, method='nearest').values
+            u10 = u10_point.sel(time=self.timestamp, method='nearest').values
         except:
             print("[ERROR] u10 not avilable")
-            u10_final = 0
+            u10 = 0
         try:
-            v10_final = v10_point1.sel(time=self.timestamp, method='nearest').values
+            v10 = v10_point.sel(time=self.timestamp, method='nearest').values
         except:
             print("[ERROR] v10 not avilable")
-            v10_final = 0
-        ang_vento = self.wind_dri(u10_final, v10_final)
+            v10 = 0
+        ang_vento = self.wind_dri(u10, v10)
 
-        return np.array([u10_final, v10_final, ang_navio, ang_vento])
+        return np.array([u10, v10, ang_navio, ang_vento])
 
     def save_wind_speeds(self, i):
         if np.round(self.df.loc[i, "LAT"]) == np.round(self.lat) and np.round(self.df.loc[i, "LON"]) == np.round(self.lon):
@@ -178,55 +195,56 @@ class ProcessMap:
         u10 = np.zeros(total_range.shape)
         v10 = np.zeros(total_range.shape)
         times = np.zeros(total_range.shape).astype(str)
-
-        for i in tqdm(total_range):
+        pbar = tqdm(total_range)
+        for i in pbar:
+            pbar.set_description(f"[INFO] From time: {self.timestamp}")
             res = self.get_wind_properties(i)
             u10[i] = res[0] 
             v10[i] = res[1]
             ang_ship[i] = res[2]
             ang_vento[i] = res[3]
             times[i] = self.timestamp.strftime('%Y-%m-%d %X')
+            self.timestamp += pd.Timedelta(seconds=self.dt)
 
-        filtered_df = self.df.loc[total_range]
-        filtered_df['u10'] = u10
-        filtered_df['v10'] = v10
-        filtered_df['angle_ship'] = ang_ship
-        filtered_df['angle_wind'] = ang_vento
-        filtered_df['time'] = times
+        self.new_df = self.df.loc[total_range, ['LAT', 'LON']].copy()
+        self.new_df['u10'] = u10
+        self.new_df['v10'] = v10
+        self.new_df['angle_ship'] = ang_ship
+        self.new_df['angle_wind'] = ang_vento
+        self.new_df['time'] = times
 
-        return filtered_df
+        return self.new_df
 
     def calculate_relative_velocity_and_angle(self):
         
-        self.new_df['u_ship'] = -self.vs_ms * np.sin(np.radians(self.new_df['angle_ship']))
+        self.new_df['u_ship'] = self.vs_ms * np.sin(np.radians(self.new_df['angle_ship']))
         self.new_df['v_ship'] = self.vs_ms * np.cos(np.radians(self.new_df['angle_ship']))
 
         self.new_df['u_rel'] = self.new_df['u_ship'] + self.new_df['u10']
         self.new_df['v_rel'] = self.new_df['v_ship'] + self.new_df['v10']
-        theta = np.degrees(np.arctan2(self.new_df['v_rel'], -self.new_df['u_rel']))
-        self.new_df['angle_rel'] = (theta*180/np.pi + 360) % 360
+        self.new_df['angle_rel'] = self.wind_dri(self.new_df['u_rel'], self.new_df['v_rel'])
 
     def process_per_route(self):
         
-        if os.path.exists(f'wind_data_year_{self.timestamp.year}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv'):
-            self.new_df = pd.read_csv(f'wind_data_year_{self.timestamp.year}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv', sep=',')
+        if os.path.exists(f'../data/route_wind_data_csvs/wind_data_year_{self.timestamp.year}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv'):
+            self.new_df = pd.read_csv(f'../data/route_wind_data_csvs/wind_data_year_{self.timestamp.year}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv', sep=',')
         else:
-            self.new_df = self.process_dataframe()
+            self.process_dataframe()
 
         self.calculate_relative_velocity_and_angle()
 
     def save_csv(self, timestamp):
         
         print(f"[INFO] Saving informations with start time: {timestamp} ..")
-        self.new_df.to_csv(f'wind_data_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.csv')
+        self.new_df.to_csv(f'../data/route_wind_data_csvs/wind_data_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.csv')
 
         
     def save_map(self, timestamp):
 
-        if not os.path.exists(f'trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html'):
+        if not os.path.exists(f'../data/route_maps/trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html'):
             print("[INFO] Ploting Map..")  
             self.create_map()
-            self.m.save(f'trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html')
+            self.m.save(f'../data/route_maps/trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html')
 
     def load_forces(self):
         self.forces_df = pd.read_csv(self.forces_path)
@@ -235,14 +253,15 @@ class ProcessMap:
 
 if __name__ == "__main__":
 
-    current_time = pd.Timestamp("2020-04-05 04:00:00")
+    current_time = pd.Timestamp("2020-01-01 00:00:00")
     for i in range(4000):
         print("Time starts: ", current_time)
-        map_processer = ProcessMap(timestamp=current_time, route_path='rota_suezmax.csv', wind_path='2020/2020.grib', forces_path='forces.csv')
+        map_processer = ProcessMap(timestamp=current_time, route_path='rota_suezmax.csv', wind_path='2020/2020_1.grib', forces_path='forces.csv')
         map_processer.load_data()
 
         map_processer.process_per_route()
         map_processer.save_csv(current_time)
-        map_processer.save_map(current_time)
-        map_processer.load_forces()
+        if i%100 == 0:
+            map_processer.save_map(current_time)
+        # map_processer.load_forces()
         current_time += pd.Timedelta(hours=1)
