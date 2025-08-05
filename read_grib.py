@@ -15,7 +15,7 @@ class ProcessMap:
         self.route_path = route_path
         self.wind_path = wind_path
         self.forces_path = forces_path
-        self.folder = os.path.basename(self.route_path).split("/")[0]
+        self.folder = os.path.dirname(self.route_path).split("/")[1]
 
         self._lock = threading.Lock()  # Add thread lock
         self.lat = 0
@@ -276,7 +276,6 @@ class ProcessMap:
             self.new_df.to_csv(csv_path)
 
     def save_map(self, timestamp):
-        import pdb;pdb.set_trace()
         map_path = f"../{self.folder}/route_maps/"
         os.makedirs(os.path.dirname(map_path), exist_ok=True)
         if not os.path.exists(
@@ -304,7 +303,7 @@ class ProcessMap:
 if __name__ == "__main__":
 
     ship = "abdias_suez"
-    current_time = pd.Timestamp("2020-01-01 00:00:00")
+    current_time = pd.Timestamp("2020-07-01 00:00:00")
     for i in range(4000):
         print("Time starts: ", current_time)
 
