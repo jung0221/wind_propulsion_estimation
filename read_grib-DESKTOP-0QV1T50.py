@@ -260,7 +260,7 @@ class ProcessMap:
 
 if __name__ == "__main__":
 
-    current_time = pd.Timestamp("2020-01-01 00:00:00")
+    current_time = pd.Timestamp("2020-03-16 03:00:00")
     for i in range(8000):
         print("Time starts: ", current_time)
         map_processer = ProcessMap(timestamp=current_time, route_path='../castro_alves_afra/ais/castro_alves_afra.csv', wind_path='../castro_alves_afra/gribs_2020/2020_1.grib', forces_path='forces.csv')

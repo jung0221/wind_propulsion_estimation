@@ -8,9 +8,7 @@ request = {
         "10m_v_component_of_wind"
     ],
     "year": ["2020"],
-    "month": [
-        "06"
-    ],
+    "month": ["12"],
     "day": [
         "01", "02", "03",
         "04", "05", "06",
@@ -36,7 +34,8 @@ request = {
     ],
     "data_format": "grib",
     "download_format": "unarchived",
-    "area": [30, -50, -40, 110]
+    "area": [30, -100, -30, -30]
 }
+
 client = cdsapi.Client()
 client.retrieve(dataset, request).download()
