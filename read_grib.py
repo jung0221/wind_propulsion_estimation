@@ -295,15 +295,11 @@ class ProcessMap:
 
     def load_forces(self):
         self.forces_df = pd.read_csv(self.forces_path)
-        import pdb
-
-        pdb.set_trace()
-
 
 if __name__ == "__main__":
 
     ship = "abdias_suez"
-    current_time = pd.Timestamp("2020-07-01 00:00:00")
+    current_time = pd.Timestamp("2020-07-09 3:00:00")
     for i in range(4000):
         print("Time starts: ", current_time)
 
