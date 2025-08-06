@@ -18,7 +18,7 @@ def get_windrose(u10, v10, lat, lon, month):
     ax = WindroseAxes.from_ax()
     ax.bar(wind_direction, wind_speed, normed=True, opening=0.8, edgecolor='white')
     ax.set_legend()
-    plt.title(f'Wind Rose for Location: {lat}°N, {lon}°E')
+    plt.title(f'Wind Rose for Location: {lat}°, {lon}°')
     plt.savefig(f'figures/windrose_{lat}_{lon}_month_{month}.png')
     
     return wind_speed, wind_direction
@@ -34,7 +34,7 @@ def get_histogram(u10, v10, lat, lon, month):
     ax1.plot(u10_xs, u10_density(u10_xs), 'r-', linewidth=2, label='Density curve')
     ax1.set_xlabel('u10 (m/s)')
     ax1.set_ylabel('Density')
-    ax1.set_title('East-West Wind Component (u10)')
+    ax1.set_title('Wind Component (u10)')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
@@ -45,7 +45,7 @@ def get_histogram(u10, v10, lat, lon, month):
     ax2.plot(v10_xs, v10_density(v10_xs), 'r-', linewidth=2, label='Density curve')
     ax2.set_xlabel('v10 (m/s)')
     ax2.set_ylabel('Density')
-    ax2.set_title('North-South Wind Component (v10)')
+    ax2.set_title('Wind Component (v10)')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
@@ -73,14 +73,24 @@ def main():
     args = parser.parse_args()
 
     print("[INFO] Reading dataset")
-    current_time = pd.Timestamp(f"2020-{int(args.month)}-01 00:00:00")
-    ds = xr.open_dataset(f'2020/2020_{args.month}.grib', engine="cfgrib")
-    lat = float(args.lat)
-    lon = float(args.lon)
-    u10, v10 = process_vels(ds, lat, lon, current_time)
-    get_windrose(u10, v10, lat, lon, args.month)
-    get_histogram(u10, v10, lat, lon, args.month)
+    all_u10 = []
+    all_v10 = []
     
-
+    for i in range(1, 13):
+        current_time = pd.Timestamp(f"2020-{i}-01 00:00:00")
+        ds = xr.open_dataset(f'../abdias_suez/gribs_2020/2020_{i}.grib', engine="cfgrib")
+        lat = float(args.lat)
+        lon = float(args.lon)
+        u10, v10 = process_vels(ds, lat, lon, current_time)
+        get_windrose(u10, v10, lat, lon, i)
+        get_histogram(u10, v10, lat, lon, i)
+        all_u10.append(u10)
+        all_v10.append(v10)
+    all_u10 = np.concatenate(all_u10)
+    all_v10 = np.concatenate(all_v10)
+    
+    get_windrose(all_u10, all_v10, lat, lon, "all_year")
+    get_histogram(all_u10, all_v10, lat, lon, "all_year")
+    
 
 main()
