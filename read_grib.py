@@ -9,19 +9,19 @@ import threading
 
 
 class ProcessMap:
-    def __init__(self, timestamp, route_path, wind_path, forces_path, trip):
+    def __init__(self, timestamp, route_path, wind_path, ship, trip):
         self.timestamp = timestamp
         self.route_path = route_path
         self.wind_path = wind_path
-        self.forces_path = forces_path
+        self.ship = ship
         self.trip = trip
         self.folder = os.path.dirname(self.route_path).split('/')[1]
 
         self._lock = threading.Lock()  # Add thread lock
         self.lat = 0
         self.lon = 0
-        vs_kns = 14  # Knots
-        self.vs_ms = vs_kns / 1.94384
+        self.vs_kns = 12 if self.ship == 'suez' else 14  # Knots
+        self.vs_ms = self.vs_kns / 1.94384
         self.new_df = None
         self.df = None
         self.current_month = None
@@ -29,7 +29,7 @@ class ProcessMap:
 
     def load_data(self):
 
-        print('[INFO] Loading wind data')
+        print(f'[INFO] Loading wind data for ship {self.ship} with speed {self.vs_kns} knots')
         self.ds = xr.open_dataset(self.wind_path, engine='cfgrib')
         if self.current_month != self.timestamp.month or self.ds is None:
             self.current_month = self.timestamp.month
@@ -276,7 +276,7 @@ class ProcessMap:
             self.new_df.to_csv(csv_path)
 
     def save_map(self, timestamp):
-        map_path = f'../{self.folder}/ida/' if self.trip == 'outbound' else f'../{self.folder}/volta/'
+        map_path = f'../{self.folder}/mapa_ida/' if self.trip == 'outbound' else f'../{self.folder}/mapa_volta/'
         os.makedirs(os.path.dirname(map_path), exist_ok=True)
         if not os.path.exists(
             os.path.join(
@@ -293,8 +293,6 @@ class ProcessMap:
                 )
             )
 
-    def load_forces(self):
-        self.forces_df = pd.read_csv(self.forces_path)
 
 if __name__ == '__main__':
 
@@ -313,7 +311,7 @@ if __name__ == '__main__':
             timestamp=current_time,
             route_path=f'../{ship}/ais/{wind_csv}',
             wind_path=f'../{ship}/gribs_2020/2020_1.grib',
-            forces_path='forces.csv',
+            ship=args.ship,
             trip=args.trip
         )
         map_processer.load_data()
@@ -322,5 +320,4 @@ if __name__ == '__main__':
         map_processer.save_csv(current_time)
         if i % 100 == 0:
             map_processer.save_map(current_time)
-        # map_processer.load_forces()
         current_time += pd.Timedelta(hours=1)
