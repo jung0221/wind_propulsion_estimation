@@ -96,9 +96,7 @@ class GetThrust:
             ceil_angle = self.angle_list[pos]
         return floor_angle, ceil_angle
 
-    def get_forces(self, ang, vel, dir='x'):
-        force_dir = 'fx' if dir == 'x' else 'fy'
-        coef_dir = 'cx' if dir == 'x' else 'cy'
+    def get_forces(self, ang, vel, force='fx', coef_dir='cx'):
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
         if ceil_angle == 360: ceil_angle = 0
         floor_forces = self.df_forces[
@@ -113,13 +111,13 @@ class GetThrust:
             (self.df_forces['Rotacao'] == self.rotation)
         ]
         if vel >= 6 and vel <= 10: 
-            fx_ceil = ceil_forces[force_dir].iloc[0] + (vel - ceil_forces['Vw'].iloc[0])*(ceil_forces[force_dir].iloc[1] - ceil_forces[force_dir].iloc[0])/(ceil_forces['Vw'].iloc[1] - ceil_forces['Vw'].iloc[0])
-            fx_floor = floor_forces[force_dir].iloc[0] + (vel - floor_forces['Vw'].iloc[0])*(floor_forces[force_dir].iloc[1] - floor_forces[force_dir].iloc[0])/(floor_forces['Vw'].iloc[1] - floor_forces['Vw'].iloc[0])
+            fx_ceil = ceil_forces[force].iloc[0] + (vel - ceil_forces['Vw'].iloc[0])*(ceil_forces[force].iloc[1] - ceil_forces[force].iloc[0])/(ceil_forces['Vw'].iloc[1] - ceil_forces['Vw'].iloc[0])
+            fx_floor = floor_forces[force].iloc[0] + (vel - floor_forces['Vw'].iloc[0])*(floor_forces[force].iloc[1] - floor_forces[force].iloc[0])/(floor_forces['Vw'].iloc[1] - floor_forces['Vw'].iloc[0])
             f = fx_floor + (ang - floor_angle)*(fx_ceil - fx_floor)/(ceil_angle - floor_angle)
 
         elif vel > 10 and vel <= 12: 
-            fx_ceil = ceil_forces[force_dir].iloc[1] + (vel - ceil_forces['Vw'].iloc[1])*(ceil_forces[force_dir].iloc[2] - ceil_forces[force_dir].iloc[1])/(ceil_forces['Vw'].iloc[2] - ceil_forces['Vw'].iloc[1])
-            fx_floor = floor_forces[force_dir].iloc[1] + (vel - floor_forces['Vw'].iloc[1])*(floor_forces[force_dir].iloc[2] - floor_forces[force_dir].iloc[1])/(floor_forces['Vw'].iloc[2] - floor_forces['Vw'].iloc[1])
+            fx_ceil = ceil_forces[force].iloc[1] + (vel - ceil_forces['Vw'].iloc[1])*(ceil_forces[force].iloc[2] - ceil_forces[force].iloc[1])/(ceil_forces['Vw'].iloc[2] - ceil_forces['Vw'].iloc[1])
+            fx_floor = floor_forces[force].iloc[1] + (vel - floor_forces['Vw'].iloc[1])*(floor_forces[force].iloc[2] - floor_forces[force].iloc[1])/(floor_forces['Vw'].iloc[2] - floor_forces['Vw'].iloc[1])
             f = fx_floor + (ang - floor_angle)*(fx_ceil - fx_floor)/(ceil_angle - floor_angle)
 
         elif vel < 6:
@@ -147,6 +145,11 @@ class GetThrust:
         subset_df['Vw'] = self.vels
         subset_df['Fx'] = self.force_x
         subset_df['Fy'] = self.force_y
+        subset_df['Fx_rotores'] = self.force_x_rotores
+        subset_df['Fy_rotores'] = self.force_y_rotores
+        subset_df['Fx_casco_sup'] = self.force_x_casco_sup
+        subset_df['Fy_casco_sup'] = self.force_y_casco_sup
+        
         
         return subset_df
 
@@ -169,6 +172,10 @@ class GetThrust:
         angle = df['angle_rel'][:]
         Fx = df['Fx'][:]
         Fy = df['Fy'][:]
+        Fx_rotores = df['Fx_rotores'][:]
+        Fy_rotores = df['Fy_rotores'][:]
+        Fx_casco_sup = df['Fx_casco_sup'][:]
+        Fy_casco_sup = df['Fy_casco_sup'][:]
 
         # Create a map centered around the first coordinate
         self.m = folium.Map(location=[lat.iloc[0], lon.iloc[0]], zoom_start=12)
@@ -198,11 +205,11 @@ class GetThrust:
         def get_color(fx_value):
             """Return color based on Fx value"""
             if fx_value < fx_min + (fx_max - fx_min) * 0.33:
-                return 'green'
+                return 'red'
             elif fx_value < fx_min + (fx_max - fx_min) * 0.66:
                 return 'orange' 
             else:
-                return 'red'
+                return 'green'
         
         # Add the trajectory to the map
         i = 0
@@ -231,12 +238,27 @@ class GetThrust:
                         <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6;">{int(angle.iloc[i])}°</td>
                     </tr>
                     <tr style="background-color: #f8f9fa;">
-                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Force X</td>
+                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx Total</td>
                         <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fx.iloc[i])}; font-weight: bold;">{Fx.iloc[i]:.2f} kN</td>
                     </tr>
                     <tr>
-                        <td style="padding: 4px 8px; font-weight: bold;">Force Y</td>
-                        <td style="padding: 4px 8px; color: {get_color(Fy.iloc[i])}; font-weight: bold;">{Fy.iloc[i]:.2f} kN</td>
+                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx Rotor</td>
+                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fx_rotores.iloc[i])}; font-weight: bold;">{Fx_rotores.iloc[i]:.2f} kN</td>
+                    </tr>
+                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx casco/sup</td>
+                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fx_casco_sup.iloc[i])}; font-weight: bold;">{Fx_casco_sup.iloc[i]:.2f} kN</td>
+                    </tr>
+                    <tr>
+                    <tr style="background-color: #f8f9fa;">
+                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx Total</td>
+                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fy.iloc[i])}; font-weight: bold;">{Fy.iloc[i]:.2f} kN</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx Rotor</td>
+                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fy_rotores.iloc[i])}; font-weight: bold;">{Fy_rotores.iloc[i]:.2f} kN</td>
+                    </tr>
+                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx casco/sup</td>
+                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fy_casco_sup.iloc[i])}; font-weight: bold;">{Fy_casco_sup.iloc[i]:.2f} kN</td>
                     </tr>
                 </table>
             </div>
@@ -422,26 +444,60 @@ class GetThrust:
         self.force_x = []
         self.force_y = []
         
+        self.force_x_rotores = []
+        self.force_y_rotores = []
+        
+        self.force_x_casco_sup = []
+        self.force_y_casco_sup = []
+        
+
         self.get_values(option='outbound')
         for ang, vel in tqdm(zip(self.angles, self.vels), total=len(self.angles), desc='outbound'):
-            fx = self.get_forces(ang, vel, 'x')
-            fy = self.get_forces(ang, vel, 'y')
+            fx_total = self.get_forces(ang, vel, 'fx', 'cx')
+            fy_total = self.get_forces(ang, vel, 'fy', 'cy')
 
-            self.force_x.append(fx)
-            self.force_y.append(fy)
-        
+            fx_rotores = self.get_forces(ang, vel, 'fx_rotores', 'cx_rotores')
+            fy_rotores = self.get_forces(ang, vel, 'fy_rotores', 'cy_rotores')
+
+            self.force_x.append(fx_total)
+            self.force_y.append(fy_total)
+            
+            self.force_x_rotores.append(fx_rotores)
+            self.force_y_rotores.append(fy_rotores)
+            
+            self.force_x_casco_sup.append(fx_total - fx_rotores)
+            self.force_y_casco_sup.append(fy_total - fy_rotores)
+            
+
+
+
         new_df_out = self.create_subset_df(option='outbound')
         self.create_map(new_df_out, option='outbound')
         self.force_x = []
         self.force_y = []
+        
+        self.force_x_rotores = []
+        self.force_y_rotores = []
+        
+        self.force_x_casco_sup = []
+        self.force_y_casco_sup = []
 
         self.get_values(option='return')
         for ang, vel in tqdm(zip(self.angles, self.vels), total=len(self.angles), desc='return'):
-            fx = self.get_forces(ang, vel, 'x')
-            fy = self.get_forces(ang, vel, 'y')
-            self.force_x.append(fx)
-            self.force_y.append(fy)
+            fx_total = self.get_forces(ang, vel, 'fx', 'cx')
+            fy_total = self.get_forces(ang, vel, 'fy', 'cy')
+
+            fx_rotores = self.get_forces(ang, vel, 'fx_rotores', 'cx_rotores')
+            fy_rotores = self.get_forces(ang, vel, 'fy_rotores', 'cy_rotores')
+            self.force_x.append(fx_total)
+            self.force_y.append(fy_total)
         
+            self.force_x_rotores.append(fx_rotores)
+            self.force_y_rotores.append(fy_rotores)
+            
+            self.force_x_casco_sup.append(fx_total - fx_rotores)
+            self.force_y_casco_sup.append(fy_total - fy_rotores)
+
         new_df_ret = self.create_subset_df(option='return')
         self.concat_and_save_df(new_df_out, new_df_ret)
         self.create_map(new_df_ret, option='return')
@@ -454,15 +510,15 @@ class GetThrust:
 
 def main():
     parser = argparse.ArgumentParser(description='Wind Route Creator')
-    parser.add_argument('--ship', help='afra or suez')
-    parser.add_argument('--rotation', help='100 or 180')
+    parser.add_argument('--ship', required=True, help='afra or suez')
+    parser.add_argument('--rotation', required=True, help='100 or 180')
     args = parser.parse_args()
     ship = 'abdias_suez' if args.ship == 'suez' else 'castro_alves_afra' 
 
     current_time = pd.Timestamp('2020-01-01 00:00:00')
     outbound_csv_path = f'../{ship}/csvs_ida'
     return_csv_path = f'../{ship}/csvs_volta'
-    forces_path = f'../{ship}/forces_V2.csv'
+    forces_path = f'../{ship}/forces_V3.csv'
     get_thrust = GetThrust(outbound_csv_path=outbound_csv_path,
                             return_csv_path=return_csv_path,
                             forces_path=forces_path,
