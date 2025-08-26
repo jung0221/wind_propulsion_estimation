@@ -204,9 +204,9 @@ class GetThrust:
         
         def get_color(fx_value):
             """Return color based on Fx value"""
-            if fx_value < fx_min + (fx_max - fx_min) * 0.33:
+            if fx_value < 20:
                 return 'red'
-            elif fx_value < fx_min + (fx_max - fx_min) * 0.66:
+            elif fx_value < 100:
                 return 'orange' 
             else:
                 return 'green'
@@ -230,7 +230,7 @@ class GetThrust:
                         <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6;">{lat:.4f}°, {lon:.4f}°</td>
                     </tr>
                     <tr style="background-color: #f8f9fa;">
-                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Wind Speed</td>
+                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Relative Wind Speed</td>
                         <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6;">{Vw.iloc[i]:.2f} m/s</td>
                     </tr>
                     <tr>
@@ -269,7 +269,7 @@ class GetThrust:
             <div style="text-align: center;">
                 <b>Point {i}</b><br>
                 <span style="color: #666;">Lat: {lat:.3f}° | Lon: {lon:.3f}°</span><br>
-                <span style="color: #2E86AB;">Wind: {Vw.iloc[i]:.1f} m/s | Angle: {int(angle.iloc[i])}°</span><br>
+                <span style="color: #2E86AB;">Relative Wind: {Vw.iloc[i]:.1f} m/s | Angle: {int(angle.iloc[i])}°</span><br>
                 <span style="color: {get_color(Fx.iloc[i])}; font-weight: bold;">Fx: {Fx.iloc[i]:.1f} kN</span> | 
                 <span style="color: {get_color(Fy.iloc[i])}; font-weight: bold;">Fy: {Fy.iloc[i]:.1f} kN</span>
             </div>
@@ -515,7 +515,7 @@ def main():
     args = parser.parse_args()
     ship = 'abdias_suez' if args.ship == 'suez' else 'castro_alves_afra' 
 
-    current_time = pd.Timestamp('2020-01-01 00:00:00')
+    current_time = pd.Timestamp('2020-07-01 00:00:00')
     outbound_csv_path = f'../{ship}/csvs_ida'
     return_csv_path = f'../{ship}/csvs_volta'
     forces_path = f'../{ship}/forces_V3.csv'
