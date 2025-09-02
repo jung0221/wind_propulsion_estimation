@@ -34,7 +34,7 @@ class ProcessMap:
         if self.current_month != self.timestamp.month or self.ds is None:
             self.current_month = self.timestamp.month
             # Construct the path for the current month's GRIB file
-            month_wind_path = f'{os.path.dirname(self.wind_path)}/2020_{int(self.current_month)}.grib'  # Adjust path format as needed
+            month_wind_path = f'{os.path.dirname(self.wind_path)}/{self.timestamp.year}_{int(self.current_month)}.grib'  # Adjust path format as needed
             self.ds = xr.open_dataset(month_wind_path, engine='cfgrib')
             print(f'[INFO] Loaded wind data for month {self.current_month}')
 
@@ -73,6 +73,7 @@ class ProcessMap:
 
     def wind_dri(self, u10, v10):
         return np.degrees(np.arctan2(-u10, -v10)) % 360
+    
     def wind_rel(self, u, v):
         return np.degrees(np.arctan2(v, u)) % 360
         
@@ -158,7 +159,7 @@ class ProcessMap:
 
         if self.current_month != self.timestamp.month:
             self.current_month = self.timestamp.month
-            month_wind_path = f'{os.path.dirname(self.wind_path)}/2020_{int(self.current_month)}.grib'  # Adjust path format as needed
+            month_wind_path = f'{os.path.dirname(self.wind_path)}/{int(self.timestamp.year)}_{int(self.current_month)}.grib'  # Adjust path format as needed
             self.ds = xr.open_dataset(month_wind_path, engine='cfgrib')
             print(f'[INFO] Loaded new wind data for month {self.current_month}')
 
@@ -258,7 +259,7 @@ class ProcessMap:
 
     def process_per_route(self):
         folder_name = 'csvs_ida' if self.trip == 'outbound' else 'csvs_volta'
-        csv_path = f'../{self.folder}/{folder_name}/wind_data_year_{self.timestamp.year}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv'
+        csv_path = f'../{self.folder}/{folder_name}/wind_data_year_{int(self.timestamp.year)}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv'
 
         if os.path.exists(csv_path):
             self.new_df = pd.read_csv(csv_path, sep=',')
@@ -302,7 +303,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ship = 'abdias_suez' if args.ship == 'suez' else 'castro_alves_afra' 
 
-    current_time = pd.Timestamp('2020-01-01 00:00:00')
+    current_time = pd.Timestamp('2020-11-17 20:00:00')
     wind_csv = 'data.csv' if args.trip == 'outbound' else 'data_rev.csv'
     for i in range(8784):
         print('Time starts: ', current_time)
