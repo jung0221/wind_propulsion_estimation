@@ -319,6 +319,6 @@ if __name__ == '__main__':
 
         map_processer.process_per_route()
         map_processer.save_csv(current_time)
-        if i % 100 == 0:
-            map_processer.save_map(current_time)
+        # if i % 100 == 0:
+        #     map_processer.save_map(current_time)
         current_time += pd.Timedelta(hours=1)
