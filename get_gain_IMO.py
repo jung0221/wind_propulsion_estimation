@@ -1,22 +1,23 @@
 import pandas as pd
 import numpy as np
 import bisect
-
+import argparse
 
 class GainIMO:
-    def __init__(self, xls_data_path, imo_data_path, forces_data_path):
+    def __init__(self, xls_data_path, imo_data_path, forces_data_path, rotation):
         xls_csv = pd.read_excel(xls_data_path, sheet_name='Ganho') 
         p_cons = xls_csv['P_rotor kW']       
         self.imo_df = pd.read_csv(imo_data_path)
         self.thrust_df = pd.read_csv(forces_data_path).iloc[:,2:]
         self.thrust_df['Pcons'] = p_cons
+        self.moments = self.thrust_df['Mz_popa_bom'] + self.thrust_df['Mz_popa_bor'] + self.thrust_df['Mz_proa_bom'] + self.thrust_df['Mz_proa_bor']
         angle_list = self.thrust_df['Angulo'].unique()
         self.angle_list = np.append(angle_list, 360)
 
         self.V_ref = 12 #knots
         self.eta_D = 0.7
         self.draft = 16.0 # meters
-        self.rotation = 100 #RPM
+        self.rotation = int(rotation) #RPM
         self.Ax = 1130
         self.Ay = 3300
         self.P_eff = 6560 # kW
@@ -110,51 +111,48 @@ class GainIMO:
                 P = P_floor + (ang - floor_angle)*(P_ceil - P_floor)/(ceil_angle - floor_angle)
             else: P = P_floor
 
-
         elif vel < 6:
-            coef_z_floor = floor_moments[floor_moments['Vw'] == 6]['cz'].values[0]
-            coef_z_ceil = ceil_moments[ceil_moments['Vw'] == 6]['cz'].values[0]
-            if ceil_angle != floor_angle:
-                coef_z = coef_z_floor + (ang - floor_angle)*(coef_z_ceil - coef_z_floor)/(ceil_angle - floor_angle)
-            else: coef_z = coef_z_floor
-            P = coef_z * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
+            P = np.mean([ceil_moments['Pcons'].iloc[0], floor_moments['Pcons'].iloc[0]])
 
         elif vel > 12:
-            coef_z_floor = floor_moments[floor_moments['Vw'] == 12]['cz'].values[0]
-            coef_z_ceil = ceil_moments[ceil_moments['Vw'] == 12]['cz'].values[0]
-            if ceil_angle != floor_angle:
-                coef_z = coef_z_floor + (ang - floor_angle)*(coef_z_ceil - coef_z_floor)/(ceil_angle - floor_angle)
-            else: coef_z = coef_z_floor
-            P = coef_z * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
+            P = np.mean([ceil_moments['Pcons'].iloc[2], floor_moments['Pcons'].iloc[2]])
         return P
 
     def calculate_effective_power(self):
         matrix_cols = self.imo_df.columns[1:]
-        W_k = 0
+        
         first_term = 0
         second_term = 0
         third_term = 0
-
         for i in range(26):
             vel = self.imo_df['vel'].iloc[i]
             for angle in matrix_cols:
                 W_k = self.imo_df.loc[i, angle]
                 first_term += W_k
-                F = self.get_forces(int(angle), vel)
+                if int(angle) <= 180: angle_cfd = 180 - int(angle)
+                elif int(angle) > 180: 540 - angle_cfd
+                F = self.get_forces(int(angle_cfd), vel)
                 second_term += (0.5144*self.V_ref/self.eta_D) * F * W_k 
-                P = self.get_power(int(angle), vel)
+                P = self.get_power(int(angle_cfd), vel)
                 third_term += P * W_k
                 
         f_eff_P_eff = (1/first_term) * (second_term - third_term)
         print(f"Ganho: {np.round(100*f_eff_P_eff/self.P_eff)}%")
         
-
+    
 def main():
+    parser = argparse.ArgumentParser(description="Wind Route Creator")
+    parser.add_argument("--ship", required=True, help="afra or suez")
+    parser.add_argument("--rotation", required=True, help="100 or 180")
+    
+    args = parser.parse_args()
+    ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
+
     xls_data_path = "../abdias_suez/CFD_Jung.xlsx"
     imo_data_path = "../imo_guidance/global_prob_matrix.csv"
     forces_data_path = "../abdias_suez/forces_V3.csv"
 
-    get_gain = GainIMO(xls_data_path=xls_data_path, imo_data_path=imo_data_path, forces_data_path=forces_data_path)
+    get_gain = GainIMO(xls_data_path=xls_data_path, imo_data_path=imo_data_path, forces_data_path=forces_data_path, rotation=args.rotation)
     get_gain.calculate_effective_power()
 
 if __name__ == "__main__":
