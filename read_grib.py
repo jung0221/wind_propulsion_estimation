@@ -303,9 +303,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ship = 'abdias_suez' if args.ship == 'suez' else 'castro_alves_afra' 
 
-    current_time = pd.Timestamp('2020-11-17 20:00:00')
+    current_time = pd.Timestamp('2021-03-09 00:00:00')
     wind_csv = 'data.csv' if args.trip == 'outbound' else 'data_rev.csv'
-    for i in range(8784):
+    for i in range(6784):
         print('Time starts: ', current_time)
 
         map_processer = ProcessMap(
