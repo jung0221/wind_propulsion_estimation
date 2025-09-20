@@ -18,7 +18,8 @@ class GetThrust:
         forces_path: str,
         rotation: int,
         ship: str,
-        no_rotor: bool
+        no_rotor: bool,
+        unwanted_angles: bool
     ):
         self.outbound_csv_path = outbound_csv_path
         self.return_csv_path = return_csv_path
@@ -44,6 +45,7 @@ class GetThrust:
         self.force_y = None
         self.new_df = None
         self.no_rotor = no_rotor
+        self.unwanted_angles = unwanted_angles
 
     def load_data(self):
 
@@ -696,14 +698,26 @@ class GetThrust:
             fx_rotores = self.get_forces(ang, vel, "fx_rotores", "cx_rotores")
             fy_rotores = self.get_forces(ang, vel, "fy_rotores", "cy_rotores")
 
+            if self.unwanted_angles and ang >= 150 and ang <= 210:
+                fx_total = fx_total - fx_rotores
+                fy_total = fy_total - fy_rotores
+                fx_rotores = 0
+                fy_rotores = 0
+            
+
             self.force_x.append(fx_total)
             self.force_y.append(fy_total)
 
             self.force_x_rotores.append(fx_rotores)
             self.force_y_rotores.append(fy_rotores)
 
-            self.force_x_casco_sup.append(fx_total - fx_rotores)
-            self.force_y_casco_sup.append(fy_total - fy_rotores)
+            if self.unwanted_angles and ang >= 150 and ang <= 210:
+                self.force_x_casco_sup.append(fx_total)
+                self.force_y_casco_sup.append(fy_total)
+            else:
+                self.force_x_casco_sup.append(fx_total - fx_rotores)
+                self.force_y_casco_sup.append(fy_total - fy_rotores)
+            
             self.P_cons.append(self.get_power_rotor(ang, vel))
 
         if self.no_rotor:
@@ -773,14 +787,13 @@ class GetThrust:
                 self.plot_histogram("Vw")
                 self.plot_histogram("Gain")
                 self.current_month = self.timestamp.month
-        # TODO: Com relação a interpolação /extrapolação seria importante indicar no relatório como está foi feita (linear???). Talvez um gráfico 3D com ângulo de incidência X velocidade x força FX.
-
 
 def main():
     parser = argparse.ArgumentParser(description="Wind Route Creator")
     parser.add_argument("--ship", required=True, help="afra or suez")
     parser.add_argument("--rotation", required=True, help="100 or 180")
-    parser.add_argument("--no-rotor", action="store_true", help="100 or 180")
+    parser.add_argument("--no-rotor", action="store_true", help="Disable rotor thrust")
+    parser.add_argument("--unwanted-angles", action="store_true", help="Disable rotor thrust in 100 and 180")
     
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
@@ -788,6 +801,11 @@ def main():
         no_rotor=True
     else: 
         no_rotor=False
+
+    if args.unwanted_angles:
+        unwanted_angles=True
+    else: 
+        unwanted_angles=False
 
     current_time = pd.Timestamp("2020-01-01 00:00:00")
     outbound_csv_path = f"../{ship}/csvs_ida"
@@ -799,7 +817,8 @@ def main():
         forces_path=forces_path,
         rotation=int(args.rotation),
         ship=ship,
-        no_rotor=no_rotor
+        no_rotor=no_rotor,
+        unwanted_angles=unwanted_angles
     )
 
     get_thrust.load_forces()
