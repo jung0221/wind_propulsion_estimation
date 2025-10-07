@@ -805,12 +805,12 @@ def main():
     if args.unwanted_angles:
         unwanted_angles=True
     else: 
-        unwanted_angles=False
+        unwanted_angles=False 
 
-    current_time = pd.Timestamp("2020-01-01 00:00:00")
+    current_time = pd.Timestamp("2021-01-01 00:00:00")
     outbound_csv_path = f"../{ship}/csvs_ida"
     return_csv_path = f"../{ship}/csvs_volta"
-    forces_path = f"../{ship}/forces_V3.csv"
+    forces_path = f"../{ship}/forces_CFD.csv"
     get_thrust = GetThrust(
         outbound_csv_path=outbound_csv_path,
         return_csv_path=return_csv_path,

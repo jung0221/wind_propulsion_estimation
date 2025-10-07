@@ -6,17 +6,18 @@ import folium
 from tqdm import tqdm
 import argparse
 import threading
+import bisect
 
 
 class ProcessMap:
-    def __init__(self, timestamp, route_path, wind_path, ship, trip):
+    def __init__(self, timestamp, route_path, wind_path, forces_path, ship, rotation):
         self.timestamp = timestamp
         self.route_path = route_path
         self.wind_path = wind_path
         self.ship = ship
-        self.trip = trip
+        self.rotation = int(rotation) 
         self.folder = os.path.dirname(self.route_path).split('/')[1]
-
+        self.forces_path = forces_path
         self._lock = threading.Lock()  # Add thread lock
         self.lat = 0
         self.lon = 0
@@ -26,6 +27,14 @@ class ProcessMap:
         self.df = None
         self.current_month = None
         self.ds = None
+        self.df_forces = None
+        self.draft = None
+        self.Ax = 1130
+        self.Ay = 3300
+        R_T = None
+        self.eta_d = 0.7
+        self.eta_rot = 0.9
+
 
     def load_data(self):
 
@@ -40,7 +49,30 @@ class ProcessMap:
 
         if not self.df:
             print('[INFO] Loading route data')
-            self.df = pd.read_csv(self.route_path, sep=';')
+            df_original = pd.read_csv(self.route_path, sep=';')
+            # Criar DataFrame com ida e volta
+            df_ida = df_original.copy()
+            df_volta = df_original.iloc[::-1].reset_index(drop=True)  # Inverte a ordem
+            # Adicionar coluna indicando direção da viagem
+            df_ida['direction'] = 'outbound'
+            df_volta['direction'] = 'return'
+            
+            # Concatenar ida e volta
+            self.df = pd.concat([df_ida, df_volta], ignore_index=True)
+
+        if not self.df_forces:
+            try:
+                print("[INFO] Loading thrust data")
+                self.df_forces = pd.read_csv(self.forces_path, index_col=0)
+                self.angle_list = self.df_forces["Angulo"].unique()
+                self.angle_list = np.append(self.angle_list, 360)
+            except FileNotFoundError as e:
+                print(f"[ERROR] {e}")
+                print("[WARNING] Continuing without return data")
+            except pd.errors.EmptyDataError:
+                print(f"[ERROR] Data file is empty")
+            except Exception as e:
+                print(f"[ERROR] Unexpected error loading return data: {e}")
         self.wind_u = None
         self.wind_v = None
 
@@ -77,62 +109,8 @@ class ProcessMap:
     def wind_rel(self, u, v):
         return np.degrees(np.arctan2(v, u)) % 360
         
-    def create_map(self):
-        if np.any(self.new_df) == None:
-            self.new_df = self.df.copy()
-        lat = self.new_df['LAT'][:]
-        lon = self.new_df['LON'][:]
-        u10 = self.new_df['u10'][:] if 'u10' in self.new_df.columns else None
-        v10 = self.new_df['v10'][:] if 'v10' in self.new_df.columns else None
-        u_ship = self.new_df['u_ship'][:] if 'u_ship' in self.new_df.columns else None
-        v_ship = self.new_df['v_ship'][:] if 'v_ship' in self.new_df.columns else None
-        u_rel = self.new_df['u_rel'][:] if 'u_rel' in self.new_df.columns else None
-        v_rel = self.new_df['v_rel'][:] if 'v_rel' in self.new_df.columns else None
-
-        angle_wind = (
-            self.new_df['angle_wind'][:]
-            if 'angle_wind' in self.new_df.columns
-            else None
-        )
-        angle_ship = (
-            self.new_df['angle_ship'][:]
-            if 'angle_ship' in self.new_df.columns
-            else None
-        )
-        angle_rel = (
-            self.new_df['angle_rel'][:] if 'angle_ship' in self.new_df.columns else None
-        )
-        times = self.new_df['time'][:] if 'time' in self.new_df.columns else None
-
-        # Create a map centered around the first coordinate
-        self.m = folium.Map(location=[lat.iloc[0], lon.iloc[0]], zoom_start=12)
-        # Add the trajectory to the map
-        i = 0
-        for lat, lon in zip(lat, lon):
-            tooltip = None
-
-            if u10 is not None and v10 is not None:
-
-                tooltip = (
-                    f'Time: {times.iloc[i]}<br>'
-                    f'Lat: {lat}<br>'
-                    f'Lon: {lon}<br>'
-                    f'u_wind: {u10.iloc[i]:.2f} m/s<br>'
-                    f'v_wind: {v10.iloc[i]:.2f} m/s<br>'
-                    f'u_ship: {u_ship.iloc[i]:.2f} m/s<br>'
-                    f'v_ship: {v_ship.iloc[i]:.2f} m/s<br>'
-                    f'u_rel: {u_rel.iloc[i]:.2f} m/s<br>'
-                    f'v_rel: {v_rel.iloc[i]:.2f} m/s<br>'
-                    f'angle ship: {angle_ship.iloc[i]:.2f} deg<br>'
-                    f'angle wind: {angle_wind.iloc[i]:.2f} deg<br>'
-                    f'angle rel: {angle_rel.iloc[i]:.2f} deg'
-                )
-
-            folium.CircleMarker(
-                location=[lat, lon], radius=1, color='blue', tooltip=tooltip
-            ).add_to(self.m)
-            i += 1
-        # Save the map to an HTML file
+    def extrapolate_v_wind(self, vel, height):
+        return vel * np.power(height/10, 1/9)
 
     def get_nearest_index(self, array, value):
         # Check if array contains datetime values
@@ -148,7 +126,7 @@ class ProcessMap:
             # For non-datetime arrays, use the original method
             return np.abs(array - value).argmin()
 
-    def get_wind_properties(self, i):
+    def get_wind_properties(self, i, z_height):
         lat1, lon1 = self.df.loc[i, 'LAT'], self.df.loc[i, 'LON']
         lat2, lon2 = self.df.loc[i + 1, 'LAT'], self.df.loc[i + 1, 'LON']
 
@@ -176,9 +154,157 @@ class ProcessMap:
         except:
             print('[ERROR] v10 not avilable')
             v10 = 0
-        ang_vento = self.wind_dri(u10, v10)
 
-        return np.array([u10, v10, ang_navio, ang_vento])
+        u10 = self.extrapolate_v_wind(u10, z_height)
+        v10 = self.extrapolate_v_wind(v10, z_height)
+        wind_angle = self.wind_dri(u10, v10)
+
+        return [u10, v10, ang_navio, wind_angle]
+
+
+    def get_adjacent_angles(self, ang):
+
+        pos = bisect.bisect_left(self.angle_list, ang)
+
+        # Get floor and ceil
+        if pos == 0:
+            floor_angle = self.angle_list[0]
+            ceil_angle = self.angle_list[0]
+        elif pos == len(self.angle_list):
+            floor_angle = self.angle_list[-1]
+            ceil_angle = self.angle_list[-1]
+        else:
+            floor_angle = self.angle_list[pos - 1]
+            ceil_angle = self.angle_list[pos]
+        return floor_angle, ceil_angle
+
+    def get_forces(self, ang, vel, force="fx", coef_dir="cx"):
+        floor_angle, ceil_angle = self.get_adjacent_angles(ang)
+        if ceil_angle == 360:
+            ceil_angle = 0
+        floor_forces = self.df_forces[
+            (self.df_forces["Angulo"] == floor_angle)
+            & (self.df_forces["Calado"] == self.draft)
+            & (self.df_forces["Rotacao"] == self.rotation)
+        ]
+
+        ceil_forces = self.df_forces[
+            (self.df_forces["Angulo"] == ceil_angle)
+            & (self.df_forces["Calado"] == self.draft)
+            & (self.df_forces["Rotacao"] == self.rotation)
+        ]
+        if vel >= 6 and vel <= 10:
+            fx_ceil = ceil_forces[force].iloc[0] + (vel - ceil_forces["Vw"].iloc[0]) * (
+                ceil_forces[force].iloc[1] - ceil_forces[force].iloc[0]
+            ) / (ceil_forces["Vw"].iloc[1] - ceil_forces["Vw"].iloc[0])
+            fx_floor = floor_forces[force].iloc[0] + (
+                vel - floor_forces["Vw"].iloc[0]
+            ) * (floor_forces[force].iloc[1] - floor_forces[force].iloc[0]) / (
+                floor_forces["Vw"].iloc[1] - floor_forces["Vw"].iloc[0]
+            )
+            if ceil_angle != floor_angle:
+                f = fx_floor + (ang - floor_angle) * (fx_ceil - fx_floor) / (
+                    ceil_angle - floor_angle
+                )
+            else:
+                f = fx_floor
+
+        elif vel > 10 and vel <= 12:
+            fx_ceil = ceil_forces[force].iloc[1] + (vel - ceil_forces["Vw"].iloc[1]) * (
+                ceil_forces[force].iloc[2] - ceil_forces[force].iloc[1]
+            ) / (ceil_forces["Vw"].iloc[2] - ceil_forces["Vw"].iloc[1])
+            fx_floor = floor_forces[force].iloc[1] + (
+                vel - floor_forces["Vw"].iloc[1]
+            ) * (floor_forces[force].iloc[2] - floor_forces[force].iloc[1]) / (
+                floor_forces["Vw"].iloc[2] - floor_forces["Vw"].iloc[1]
+            )
+            if ceil_angle != floor_angle:
+                f = fx_floor + (ang - floor_angle) * (fx_ceil - fx_floor) / (
+                    ceil_angle - floor_angle
+                )
+            else:
+                f = fx_floor
+
+        elif vel < 6:
+            coef_x_floor = floor_forces[floor_forces["Vw"] == 6][coef_dir].values[0]
+            coef_x_ceil = ceil_forces[ceil_forces["Vw"] == 6][coef_dir].values[0]
+            if ceil_angle != floor_angle:
+                coef_x = coef_x_floor + (ang - floor_angle) * (
+                    coef_x_ceil - coef_x_floor
+                ) / (ceil_angle - floor_angle)
+            else:
+                coef_x = coef_x_floor
+            f = coef_x * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
+
+        elif vel > 12:
+            coef_x_floor = floor_forces[floor_forces["Vw"] == 12][coef_dir].values[0]
+            coef_x_ceil = ceil_forces[ceil_forces["Vw"] == 12][coef_dir].values[0]
+            if ceil_angle != floor_angle:
+                coef_x = coef_x_floor + (ang - floor_angle) * (
+                    coef_x_ceil - coef_x_floor
+                ) / (ceil_angle - floor_angle)
+            else:
+                coef_x = coef_x_floor
+            f = coef_x * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
+
+        return f
+
+
+    def get_power_rotor(self, ang, vel, moment="Mz_rotor", coef_dir="cz"):
+        floor_angle, ceil_angle = self.get_adjacent_angles(ang)
+        if ceil_angle == 360:
+            ceil_angle = 0
+        floor_moments = self.df_forces[
+            (self.df_forces["Angulo"] == floor_angle)
+            & (self.df_forces["Calado"] == self.draft)
+            & (self.df_forces["Rotacao"] == self.rotation)
+        ]
+
+        ceil_moments = self.df_forces[
+            (self.df_forces["Angulo"] == ceil_angle)
+            & (self.df_forces["Calado"] == self.draft)
+            & (self.df_forces["Rotacao"] == self.rotation)
+        ]
+        if vel >= 6 and vel <= 10:
+            mz_ceil = ceil_moments[moment].iloc[0] + (
+                vel - ceil_moments["Vw"].iloc[0]
+            ) * (ceil_moments[moment].iloc[1] - ceil_moments[moment].iloc[0]) / (
+                ceil_moments["Vw"].iloc[1] - ceil_moments["Vw"].iloc[0]
+            )
+            mz_floor = floor_moments[moment].iloc[0] + (
+                vel - floor_moments["Vw"].iloc[0]
+            ) * (floor_moments[moment].iloc[1] - floor_moments[moment].iloc[0]) / (
+                floor_moments["Vw"].iloc[1] - floor_moments["Vw"].iloc[0]
+            )
+            m = mz_floor + (ang - floor_angle) * (mz_ceil - mz_floor) / (
+                ceil_angle - floor_angle
+            )
+
+        elif vel > 10 and vel <= 12:
+            mz_ceil = ceil_moments[moment].iloc[1] + (
+                vel - ceil_moments["Vw"].iloc[1]
+            ) * (ceil_moments[moment].iloc[2] - ceil_moments[moment].iloc[1]) / (
+                ceil_moments["Vw"].iloc[2] - ceil_moments["Vw"].iloc[1]
+            )
+            mz_floor = floor_moments[moment].iloc[1] + (
+                vel - floor_moments["Vw"].iloc[1]
+            ) * (floor_moments[moment].iloc[2] - floor_moments[moment].iloc[1]) / (
+                floor_moments["Vw"].iloc[2] - floor_moments["Vw"].iloc[1]
+            )
+            m = mz_floor + (ang - floor_angle) * (mz_ceil - mz_floor) / (
+                ceil_angle - floor_angle
+            )
+
+        elif vel < 6:
+            m = 0.5 * (ceil_moments[moment].iloc[0] + floor_moments[moment].iloc[0])
+
+        elif vel > 12:
+            m = 0.5 * (ceil_moments[moment].iloc[2] + floor_moments[moment].iloc[2])
+
+        P_cons = m * self.rotation * np.pi / (30 * self.eta_rot)
+
+        return P_cons
+
 
     def save_wind_speeds(self, i):
         if np.round(self.df.loc[i, 'LAT']) == np.round(self.lat) and np.round(
@@ -211,114 +337,185 @@ class ProcessMap:
                 pass
 
             self.timestamp += pd.Timedelta(hours=1)
-        print()
         return self.wind_u, self.wind_v, self.lat, self.lon
 
-    def process_dataframe(self):
-        total_range = np.arange(len(self.df) - 1)
+    def calc_ship_speed(self, ang_ship):
+        u_ship = self.vs_ms * np.sin(
+            np.radians(ang_ship)
+        )
+        v_ship = self.vs_ms * np.cos(
+            np.radians(ang_ship)
+        )
+        return u_ship, v_ship
 
-        ang_ship = np.zeros(total_range.shape)
-        ang_vento = np.zeros(total_range.shape)
-        u10 = np.zeros(total_range.shape)
-        v10 = np.zeros(total_range.shape)
-        times = np.zeros(total_range.shape).astype(str)
-        pbar = tqdm(total_range)
+    def calc_relative_velocity_and_angle(self, u10, v10, u_ship, v_ship):
+
+        u_rel = u10 - u_ship
+        v_rel = v10 - v_ship
+        angle_rel = self.wind_rel(
+            u_rel, v_rel
+        )
+        return u_rel, v_rel, angle_rel
+    
+    def process_dataframe(self):
+        total_range = np.arange(len(self.df)-1)
+        ang_ship = []
+        ang_vento = []
+        u10 = []
+        v10 = []
+        u_ship = []
+        v_ship = []
+        u_rel = []
+        v_rel = []
+        angle_rel = []
+        times = []
+        force_x = []
+        force_y = []
+        force_x_rotores = []
+        force_y_rotores = []
+        p_cons = []
+        pbar = tqdm(total_range, desc="Ida: Calado Carregado")
+        z_height = 27.7
+        self.draft = 16
+        R_T = np.zeros(total_range.shape[0])
+        P_E = np.zeros(total_range.shape[0])
+        
+        cond = 'carreg'
         for i in pbar:
-            pbar.set_description(f'[INFO] From time: {self.timestamp}')
-            res = self.get_wind_properties(i)
-            u10[i] = res[0]
-            v10[i] = res[1]
-            ang_ship[i] = res[2]
-            ang_vento[i] = res[3]
-            times[i] = self.timestamp.strftime('%Y-%m-%d %X')
+            pbar.set_description(f"[INFO] From time: {self.timestamp}, {cond}")
+            if cond == 'carreg':
+                R_T[i] = 744
+                P_E[i] = 4592
+            else: 
+                R_T[i] = 694
+                P_E[i] = 4282
+            
+            if i == int(total_range[-1]/2):
+                z_height = 35.5
+                self.draft = 8.5
+                cond = 'lastro'
+            res = self.get_wind_properties(i, z_height)
+
+            # Wind parameters
+            u10.append(res[0])
+            v10.append(res[1])
+            ang_vento.append(res[3])
+
+            # Ship parameters
+            ang_ship.append(res[2])
+            u_ship_i, v_ship_i = self.calc_ship_speed(res[2])
+            u_ship.append(u_ship_i)
+            v_ship.append(v_ship_i)
+
+            # Relative parameters
+            u_rel_i, v_rel_i, angle_rel_i = self.calc_relative_velocity_and_angle(res[0], res[1], u_ship_i, v_ship_i)
+            u_rel.append(u_rel_i)
+            v_rel.append(v_rel_i)
+            angle_rel.append(angle_rel_i)
+
+            vel_mag = np.sqrt(np.power(u_rel_i, 2) + np.power(v_rel_i, 2))
+            fx_total = self.get_forces(angle_rel_i, vel_mag, 'fx', 'cx')
+            fy_total = self.get_forces(angle_rel_i, vel_mag, 'fy', 'cy')
+            fx_rotores = self.get_forces(angle_rel_i, vel_mag, "fx_rotores", "cx_rotores")
+            fy_rotores = self.get_forces(angle_rel_i, vel_mag, "fy_rotores", "cy_rotores")
+            p_cons.append(self.get_power_rotor(angle_rel_i, vel_mag)/1000)
+
+            force_x.append(fx_total)
+            force_y.append(fy_total)
+            force_x_rotores.append(fx_rotores)
+            force_y_rotores.append(fy_rotores)
+            
+            times.append(str(self.timestamp.strftime('%Y-%m-%d %X')))
             self.timestamp += pd.Timedelta(seconds=self.dt)
+    
+        u10 = np.array(u10)
+        v10 = np.array(v10)   
+        ang_ship = np.array(ang_ship)
+        ang_vento = np.array(ang_vento)
+        u_rel = np.array(u_rel)
+        v_rel = np.array(v_rel)
+        angle_rel = np.array(angle_rel)
+        times = np.array(times)
+
+        force_x = np.array(force_x)
+        force_y = np.array(force_y)
+        force_x_rotores = np.array(force_x_rotores)
+        force_y_rotores = np.array(force_y_rotores)
+        p_cons = np.array(p_cons)
+        force_x_casco_sup = force_x - force_x_rotores 
+        force_y_casco_sup = force_y - force_y_rotores 
+        p_prop = (R_T - force_x) * self.vs_ms
+
+        P_E_ = p_cons + p_prop
+        gain = 1 - P_E_ / P_E
 
         self.new_df = self.df.loc[total_range, ['LAT', 'LON']].copy()
+        self.new_df['time'] = times
         self.new_df['u10'] = u10
         self.new_df['v10'] = v10
-        self.new_df['angle_ship'] = ang_ship
-        self.new_df['angle_wind'] = ang_vento
-        self.new_df['time'] = times
+        self.new_df['u_ship'] = u_ship
+        self.new_df['v_ship'] = v_ship
+        self.new_df['u_rel'] = u_rel
+        self.new_df['v_rel'] = v_rel
+        self.new_df['angle_rel'] = angle_rel
+        self.new_df['force_x_total'] = force_x
+        self.new_df['force_y_total'] = force_y
+        self.new_df['force_x_rotor'] = force_x_rotores
+        self.new_df['force_y_rotor'] = force_y_rotores
+        self.new_df['force_x_casco_sup'] = force_x_casco_sup
+        self.new_df['force_y_casco_sup'] = force_y_casco_sup
+        self.new_df['p_cons'] = p_cons
+        self.new_df['p_prop'] = p_prop
+        self.new_df['p_e_rotor'] = P_E_
+        self.new_df['gain'] = gain
 
         return self.new_df
 
-    def calculate_relative_velocity_and_angle(self):
-
-        self.new_df['u_ship'] = self.vs_ms * np.sin(
-            np.radians(self.new_df['angle_ship'])
-        )
-        self.new_df['v_ship'] = self.vs_ms * np.cos(
-            np.radians(self.new_df['angle_ship'])
-        )
-
-        self.new_df['u_rel'] = self.new_df['u10'] - self.new_df['u_ship']
-        self.new_df['v_rel'] = self.new_df['v10'] - self.new_df['v_ship']
-        self.new_df['angle_rel'] = self.wind_rel(
-            self.new_df['u_rel'], self.new_df['v_rel']
-        )
 
     def process_per_route(self):
-        folder_name = 'csvs_ida' if self.trip == 'outbound' else 'csvs_volta'
-        csv_path = f'../{self.folder}/{folder_name}/wind_data_year_{int(self.timestamp.year)}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv'
+        csv_path = f'../{self.folder}/route_csvs{self.rotation}/wind_data_year_{int(self.timestamp.year)}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv'
 
         if os.path.exists(csv_path):
             self.new_df = pd.read_csv(csv_path, sep=',')
         else:
             self.process_dataframe()
 
-        self.calculate_relative_velocity_and_angle()
-
     def save_csv(self, timestamp):
-        folder_name = 'csvs_ida' if self.trip == 'outbound' else 'csvs_volta'
-        csv_path = f'../{self.folder}/{folder_name}/wind_data_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.csv'
+        csv_path = f'../{self.folder}/route_csvs{self.rotation}/wind_data_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.csv'
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         if not os.path.exists(csv_path):
             print(f'[INFO] Saving informations with start time: {timestamp} ..')
             self.new_df.to_csv(csv_path)
-
-    def save_map(self, timestamp):
-        map_path = f'../{self.folder}/mapa_ida/' if self.trip == 'outbound' else f'../{self.folder}/mapa_volta/'
-        os.makedirs(os.path.dirname(map_path), exist_ok=True)
-        if not os.path.exists(
-            os.path.join(
-                map_path,
-                f'trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html',
-            )
-        ):
-            print('[INFO] Ploting Map..')
-            self.create_map()
-            self.m.save(
-                os.path.join(
-                    map_path,
-                    f'trajectory_map_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.html',
-                )
-            )
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Wind Route Creator')
     parser.add_argument('--ship', help='afra or suez')
-    parser.add_argument('--trip', help='outbound (ida) or return (volta)')
+    parser.add_argument("--rotation", required=True, help="100 or 180")
+    parser.add_argument("--start-month", required=True, help="Start month")
+    
     args = parser.parse_args()
     ship = 'abdias_suez' if args.ship == 'suez' else 'castro_alves_afra' 
 
-    current_time = pd.Timestamp('2021-03-09 00:00:00')
-    wind_csv = 'data.csv' if args.trip == 'outbound' else 'data_rev.csv'
-    for i in range(6784):
+    current_time = pd.Timestamp(f'2021-{int(args.start_month)}-01 00:00:00')
+    wind_csv = 'data.csv'
+
+    forces_path = f"../{ship}/forces_CFD.csv"
+
+    for i in range(2200):
         print('Time starts: ', current_time)
 
         map_processer = ProcessMap(
             timestamp=current_time,
             route_path=f'../{ship}/ais/{wind_csv}',
             wind_path=f'../{ship}/gribs_2020/2020_1.grib',
+            forces_path=forces_path,
             ship=args.ship,
-            trip=args.trip
+            rotation=args.rotation
         )
         map_processer.load_data()
 
         map_processer.process_per_route()
         map_processer.save_csv(current_time)
-        # if i % 100 == 0:
-        #     map_processer.save_map(current_time)
         current_time += pd.Timedelta(hours=1)

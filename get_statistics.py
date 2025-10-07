@@ -7,6 +7,31 @@ from scipy.stats import gaussian_kde
 from windrose import WindroseAxes
 import argparse
 
+def get_windrose_from_route(route_df, output_name="route"):
+    """
+    Create windrose from route data with u10, v10 columns
+    
+    Parameters:
+    route_df: DataFrame with columns ['LAT', 'LON', 'u10', 'v10']
+    output_name: name for output file
+    """
+    # Extract u10 and v10 from the route dataframe
+    u10 = route_df['u10'].values
+    v10 = route_df['v10'].values
+    
+    # Calculate wind speed and direction
+    wind_speed = np.sqrt(u10**2 + v10**2)
+    wind_direction = np.degrees(np.arctan2(-u10, -v10)) % 360
+    
+    # Create windrose plot
+    ax = WindroseAxes.from_ax()
+    ax.bar(wind_direction, wind_speed, normed=True, opening=0.8, edgecolor='white')
+    ax.set_legend()
+    plt.title(f'Wind Rose for Route: {output_name}')
+    plt.savefig(f'figures/windrose_{output_name}.png')
+    plt.show()
+    
+    return wind_speed, wind_direction
 
 
 def get_windrose(u10, v10, lat, lon, month):
@@ -70,6 +95,8 @@ def main():
     parser.add_argument('--month', help='month')
     parser.add_argument('--lat', help='latitude')
     parser.add_argument('--lon', help='longitude')
+    parser.add_argument('--route', help='longitude')
+    
     args = parser.parse_args()
 
     print("[INFO] Reading dataset")
@@ -89,7 +116,8 @@ def main():
     all_u10 = np.concatenate(all_u10)
     all_v10 = np.concatenate(all_v10)
     
-    get_windrose(all_u10, all_v10, lat, lon, "all_year")
+
+    get_windrose_from_route(route_df, output_name="route")
     get_histogram(all_u10, all_v10, lat, lon, "all_year")
     
 
