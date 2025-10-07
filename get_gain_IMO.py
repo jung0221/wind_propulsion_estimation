@@ -508,8 +508,8 @@ class GainIMO:
         return
 
     def plot_graphics(self):
-        # self.polar_plot(self.wind_angles, self.V_wind, self.forces_k)
-        # self.heatmap_plot(self.W_k, self.V_wind)
+        self.polar_plot(self.wind_angles, self.V_wind, self.forces_k)
+        self.heatmap_plot(self.W_k, self.V_wind)
         self.plot_velocity_comparison()
         self.plot_velocity_summary() 
 
@@ -524,7 +524,7 @@ def main():
     xls_data_path = "../abdias_suez/CFD_Jung.xlsx"
     imo_data_path = "../imo_guidance/global_prob_matrix.csv"
     forces_data_path = f"../{ship}/forces_CFD.csv"
-    rotations = [100, 180]
+    rotations = [100]
     drafts = [8.5, 16]
     
     for rotation in rotations:
