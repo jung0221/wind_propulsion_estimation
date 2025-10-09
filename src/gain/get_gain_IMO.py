@@ -173,8 +173,8 @@ class GainIMO:
         if pos == 0:
             # ang is at or before the first angle (0)
             if ang == search_angles[0]:
-                floor_angle = search_angles[0]
-                ceil_angle = search_angles[1]
+                floor_angle = ang
+                ceil_angle = ang
             else:
                 # This shouldn't happen if ang >= 0
                 floor_angle = search_angles[-1]  # 330
@@ -187,8 +187,8 @@ class GainIMO:
             # Normal case: ang is between two angles
             if ang == search_angles[pos]:
                 # Exact match
-                floor_angle = search_angles[pos]
-                ceil_angle = search_angles[pos + 1] if pos + 1 < len(search_angles) else search_angles[0]
+                floor_angle = ang
+                ceil_angle = ang
             else:
                 # Between two angles
                 floor_angle = search_angles[pos - 1]
@@ -198,22 +198,28 @@ class GainIMO:
 
     def get_forces(self, ang, vel, force="fx", coef_dir="cx"):
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
-
+        ceil_ang = ceil_angle
         floor_forces = self.thrust_df[
             (self.thrust_df["Angulo"] == floor_angle)
             & (self.thrust_df["Calado"] == self.draft)
             & (self.thrust_df["Rotacao"] == self.rotation)
         ]
-
-        if ceil_angle == 360:
-            ceil_ang = 0
-        else:
-            ceil_ang = ceil_angle
         ceil_forces = self.thrust_df[
             (self.thrust_df["Angulo"] == ceil_ang)
             & (self.thrust_df["Calado"] == self.draft)
             & (self.thrust_df["Rotacao"] == self.rotation)
         ]
+
+        if ang < 360 and ang > 330: 
+            ceil_angle = 360
+            ceil_ang = 0
+            floor_angle = 330
+
+
+        if ang < 30 and ang > 0: 
+            ceil_angle = 30
+            floor_angle = 0
+
         if vel >= 6 and vel <= 10:
             fx_ceil = ceil_forces[force].iloc[0] + (vel - ceil_forces["Vw"].iloc[0]) * (
                 ceil_forces[force].iloc[1] - ceil_forces[force].iloc[0]
@@ -229,6 +235,8 @@ class GainIMO:
                 )
             else:
                 f = fx_floor
+            coef_x = f / (0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000)
+            return f, coef_x
 
         elif vel > 10 and vel <= 12:
             fx_ceil = ceil_forces[force].iloc[1] + (vel - ceil_forces["Vw"].iloc[1]) * (
@@ -245,7 +253,9 @@ class GainIMO:
                 )
             else:
                 f = fx_floor
-
+            coef_x = f / (0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000)
+            return f, coef_x
+        
         elif vel < 6:
             coef_x_floor = floor_forces[floor_forces["Vw"] == 6][coef_dir].values[0]
             coef_x_ceil = ceil_forces[ceil_forces["Vw"] == 6][coef_dir].values[0]
@@ -256,6 +266,7 @@ class GainIMO:
             else:
                 coef_x = coef_x_floor
             f = coef_x * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
+            return f, coef_x
 
         elif vel > 12:
             coef_x_floor = floor_forces[floor_forces["Vw"] == 12][coef_dir].values[0]
@@ -267,8 +278,8 @@ class GainIMO:
             else:
                 coef_x = coef_x_floor
             f = coef_x * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
-        return f
-
+            return f, coef_x
+        
     def get_power(self, ang, vel):
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
         if ceil_angle == 360:
@@ -301,6 +312,7 @@ class GainIMO:
             else:
                 P = P_floor
 
+
         elif vel > 10 and vel <= 12:
             P_ceil = ceil_moments["Pcons"].iloc[1] + (
                 vel - ceil_moments["Vw"].iloc[1]
@@ -331,25 +343,18 @@ class GainIMO:
         alpha = 1 / 9
         return v_10 * np.power(z / 10, alpha)
 
-    # def calculate_relative_ship_velocity(self, rel_angle, V_wz):
-    #     return np.sqrt(
-    #         np.power(V_wz, 2)
-    #         + np.power(self.V_ship, 2)
-    #         - 2 * V_wz * self.V_ship * np.cos(rel_angle)
-    #     )
-
-    def polar_plot(self, x_axis, y_axis, z_axis):
+    def polar_plot(self, x_axis, y_axis, z_axis, title):
         fig = plt.figure(figsize=(10, 8))
         ax = fig.add_subplot(111, polar=True)
         theta = np.deg2rad(x_axis)
-        for i in range(int(len(y_axis) / 5)):
+        for i in range(int(len(y_axis) / 3)):
             ax.plot(
-                theta, z_axis[int(i * 5), :], label=f"V = {y_axis[int(i*5)]:.1f} m/s"
+                theta, z_axis[int(i * 3), :], label=f"V = {y_axis[int(i*3)]:.1f} m/s"
             )
         ax.set_theta_zero_location("N")
         ax.set_theta_direction(-1)
         ax.set_thetagrids(range(0, 360, 30))  # Add this line for 30-degree steps
-        ax.set_title("Curvas polares da força para diferentes velocidades", va="bottom", fontsize=20)
+        ax.set_title(title, va="bottom", fontsize=20)
         ax.legend(loc="center right", bbox_to_anchor=(1.2, 0.1))
         plt.show()
 
@@ -455,7 +460,6 @@ class GainIMO:
         u_wind = V_wz * -np.cos(wind_angle)
         v_wind = V_wz * -np.sin(wind_angle)
         
-        # Relative wind components (wind relative to ship)
         u_rel = u_ship - u_wind 
         v_rel = v_wind
         
@@ -473,45 +477,86 @@ class GainIMO:
         second_term = 0
         third_term = 0
         self.forces_k = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
-        self.forces_ki = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
+        self.forces_rotor_k = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
+        self.coefs_xk = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
         
         power_k = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
         self.W_k = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
-        sum_extrp = 0
-        sum_rel = 0
-
+        soma_forces = 0
         for i, wind_angle in enumerate(self.wind_angles):
-            Vk, ang = self.calculate_relative_ship_velocity(np.deg2rad(wind_angle), V_wz)
+            self.Vk, ang = self.calculate_relative_ship_velocity(np.deg2rad(wind_angle), V_wz)
             # Fix the angle reference for CFD
-            for j, (vel, angle) in enumerate(zip(Vk, ang)):
+            for j, (vel, angle) in enumerate(zip(self.Vk, ang)):
                 Pk = self.get_power(angle, vel)
-                Fxk = self.get_forces(angle, vel)
+                Fxk, cxk = self.get_forces(angle, vel)
+                Fxk_rotor, cxk_rotor = self.get_forces(angle, vel, force='fx_rotores')
                 if Fxk >= self.RT:
                     Fxk = self.RT
+                
                 self.forces_k[j][i] = Fxk
-                self.forces_ki[j][i] = self.get_forces(angle, V_wz[j])
+                soma_forces += Fxk
+                self.forces_rotor_k[j][i] = Fxk_rotor
+                self.coefs_xk[j][i] = cxk
                 power_k[j][i] = Pk
                 self.W_k[j][i] = self.imo_df.loc[j, str(wind_angle)]
                 first_term += self.W_k[j][i]
                 second_term += (self.V_ship / self.eta_D) * Fxk * self.W_k[j][i]
                 third_term += Pk * self.W_k[j][i]
-                # if j == 5: print(f"Vel {vel} angle {cfd_angle} force {Fxk}")
-            
-            sum_extrp += np.sum(self.forces_ki[:,i])
-            sum_rel += np.sum(self.forces_k[:,i])
-            
-        print(f"Vel extrp: {sum_extrp}, Vel rel: {sum_rel}")
-            
+        print(f"Soma de todas as forças: ", soma_forces)
+        print(f"Força: {second_term}")
+        print(f"Consumo: {third_term}")
+        
+        print(f"Razão do consumo pelo empuxo: {np.round(100*third_term/second_term)}%")
         f_eff_P_eff = (1/first_term) * (second_term - third_term)
+        print(f"Primeiro termo: {first_term}")
+        print(f"f_eff_p_eff: {f_eff_P_eff}")
+        
         print(f"Potência efetiva: {np.round(self.P_eff - f_eff_P_eff)} kW")
-        print(f"Ganho: {np.round(100*f_eff_P_eff/self.P_break)}%")
+        print(f"Ganho: {np.round(100*f_eff_P_eff/self.P_eff)}%")
         return
+    
+    def plot_cx_vs_velocity(self, angles=None):
+        """
+        Plot Cx (self.coefs_xk) behaviour along wind speed.
+        - If angles is None: plot mean +/- std across all angles.
+        - If angles is a list of angles (degrees): plot Cx for those angles.
+        """
+        if not hasattr(self, "coefs_xk") or self.coefs_xk.size == 0:
+            raise RuntimeError("coefs_xk not available. Run run() first.")
+
+        V = self.V_wind  # wind speeds (m/s)
+        C = self.coefs_xk  # shape (nV, nAngles)
+
+        plt.figure(figsize=(8, 5))
+        if angles is None:
+            mean_cx = np.nanmean(C, axis=1)
+            std_cx = np.nanstd(C, axis=1)
+            plt.plot(V, mean_cx, color="black", lw=2, label="mean Cx (all angles)")
+            plt.fill_between(V, mean_cx - std_cx, mean_cx + std_cx, color="gray", alpha=0.3,
+                             label="±1 std")
+        else:
+            # find nearest available angle indices
+            idxs = [int(np.argmin(np.abs(self.wind_angles - a))) for a in angles]
+            for idx in idxs:
+                plt.plot(V, C[:, idx], lw=2, label=f"angle {int(self.wind_angles[idx])}°")
+
+        plt.xlabel("Wind speed (m/s)", fontsize=12)
+        plt.ylabel("Cx (coeficient)", fontsize=12)
+        plt.title("Cx vs Wind speed", fontsize=14)
+        plt.grid(alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
 
     def plot_graphics(self):
-        self.polar_plot(self.wind_angles, self.V_wind, self.forces_k)
+        # Cx, Cz plots
+        self.plot_cx_vs_velocity(angles=[30, 60, 90])
+        # self.polar_plot(self.wind_angles, self.V_wind, self.coefs_xk, "Curvas polares de C_x para diferentes velocidades")
+        self.polar_plot(self.wind_angles, self.V_wind, self.forces_rotor_k, "Curvas polares da força para diferentes velocidades (só rotor)")
         self.heatmap_plot(self.W_k, self.V_wind)
         self.plot_velocity_comparison()
         self.plot_velocity_summary() 
+        
 
 def main():
     parser = argparse.ArgumentParser(description="Wind Route Creator")
@@ -524,7 +569,7 @@ def main():
     xls_data_path = "../abdias_suez/CFD_Jung.xlsx"
     imo_data_path = "../imo_guidance/global_prob_matrix.csv"
     forces_data_path = f"../{ship}/forces_CFD.csv"
-    rotations = [100]
+    rotations = [100, 180]
     drafts = [8.5, 16]
     
     for rotation in rotations:

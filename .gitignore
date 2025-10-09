@@ -3,4 +3,5 @@
 *.csv
 *.idx
 *.zip
-*.png
+figures/
+windroses/
