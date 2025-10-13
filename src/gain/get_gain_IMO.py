@@ -6,8 +6,34 @@ import matplotlib.pyplot as plt
 import os
 
 class GainIMO:
-    def __init__(self, imo_data_path, forces_data_path, rotation, draft):
+    def __init__(self, imo_data_path, forces_data_path, rotation, draft, modified):
         self.imo_df = pd.read_csv(imo_data_path)
+        if modified:
+            # garantir dtype float nas colunas numéricas para evitar FutureWarning
+            try:
+                self.imo_df = self.imo_df.astype(float)
+            except Exception:
+                # se existirem colunas não-numéricas, converte apenas as numéricas
+                num_cols = self.imo_df.select_dtypes(include=['number']).columns
+                self.imo_df[num_cols] = self.imo_df[num_cols].astype(float)
+
+            # shift all rows down by 3 (V=1 -> V=4), fill top 3 rows with zeros
+            if len(self.imo_df) > 3:
+                shifted = pd.DataFrame(
+                    0.0,
+                    index=self.imo_df.index,
+                    columns=self.imo_df.columns,
+                    dtype=float
+                )
+                # usar to_numpy(dtype=float) para garantir compatibilidade de tipos
+                shifted.iloc[3:, :] = self.imo_df.iloc[:-3, :].to_numpy(dtype=float)
+                self.imo_df = shifted
+            else:
+                # not enough rows -> zero numeric columns
+                self.imo_df.loc[:, :] = 0.0
+
+            print("[INFO] imo_df shifted +3 rows (first 3 rows set to 0) due to modified=True")
+
         self.thrust_df = pd.read_csv(forces_data_path)
         self.thrust_df["Angulo"] = np.where(
         self.thrust_df["Angulo"] <= 180, 
@@ -24,7 +50,7 @@ class GainIMO:
         self.angle_list = np.append(angle_list, 360)
 
         # 1. Define V_ref (ship velocity)
-        self.V_ship = 12 * 0.5144  # knots to m/s
+        self.V_ship = 15 * 0.5144  # knots to m/s
         self.eta_D = 0.7
         self.RT = 744 # kN
         self.draft = float(draft)  # meters
@@ -581,7 +607,7 @@ class GainIMO:
         v_wind = V_wz * -np.sin(wind_angle)
         
         u_rel = u_ship - u_wind 
-        v_rel = v_wind
+        v_rel = -v_wind
         
         rel_ang = np.degrees(np.arctan2(v_rel, u_rel)) % 360
 
@@ -600,13 +626,21 @@ class GainIMO:
         self.forces_k = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
         self.forces_rotor_k = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
         self.coefs_xk = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
+        self.rel_angls = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
+        self.V_k_mat = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
         
         power_k = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
         self.W_k = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
+
+
         soma_forces = 0
         for i, wind_angle in enumerate(self.wind_angles):
             self.Vk, ang = self.calculate_relative_ship_velocity(np.deg2rad(wind_angle), self.V_wz)
             # Fix the angle reference for CFD
+
+            self.V_k_mat[:, i] = self.Vk
+            self.rel_angls[:, i] = ang  
+            
             for j, (vel, angle) in enumerate(zip(self.V_wind, ang)):
                 Pk = self.get_power(angle, vel)
                 Fxk, cxk = self.get_forces(angle, vel)
@@ -645,99 +679,211 @@ class GainIMO:
         self.plot_velocity_comparison()
         self.plot_velocity_summary() 
 
-    def compare_common_force(self, mats):
+    def compare_common_force(self, mats, target_angles=[0, 90, 180], vk_mats=None, ang_mats=None):
         """
-        Plot total (sum over angles) force vs wind speed for the rotations (100/180)
-        and for each draft present in mats (which can contain 2 or 4 matrices).
-        Highlights the speed interval 3..11 m/s and shows the integral over that interval
-        in the legend.
+        Plot total force vs wind speed for specific angles with relative velocity and angle annotations
+        
+        Args:
+            mats: List of force matrices
+            target_angles: List of angles in degrees to include in the sum
+            vk_mats: List of relative velocity matrices (same order as mats)
+            ang_mats: List of relative angle matrices (same order as mats)
         """
-
         speed_slice = slice(0, 25)
         V = np.asarray(self.V_wind)[speed_slice]
 
+        # Find indices of target angles in wind_angles array
+        angle_indices = []
+        actual_angles = []
+        for target_angle in target_angles:
+            idx = np.argmin(np.abs(self.wind_angles - target_angle))
+            angle_indices.append(idx)
+            actual_angles.append(self.wind_angles[idx])
+            print(f"[INFO] Target angle {target_angle}° -> Index {idx} (actual angle: {self.wind_angles[idx]}°)")
+
         # ensure numpy arrays
         mats = [np.asarray(m) for m in mats]
+        if vk_mats is not None:
+            vk_mats = [np.asarray(m) for m in vk_mats]
+        if ang_mats is not None:
+            ang_mats = [np.asarray(m) for m in ang_mats]
 
-        if len(mats) >= 4:
-            pairs = [(mats[0][speed_slice, :], mats[1][speed_slice, :]),
-                    (mats[2][speed_slice, :], mats[3][speed_slice, :])]
+        # Verificar quantas matrizes temos e organizar os pares corretamente
+        print(f"[DEBUG] Number of matrices: {len(mats)}")
+        print(f"[DEBUG] Number of vk_mats: {len(vk_mats) if vk_mats is not None else 'None'}")
+        print(f"[DEBUG] Number of ang_mats: {len(ang_mats) if ang_mats is not None else 'None'}")
+        
+        if len(mats) == 4:
+            # 4 matrizes: draft 8.5 (100, 180) + draft 16 (100, 180)
+            pairs = [(mats[0][speed_slice, :], mats[1][speed_slice, :]),  # draft 8.5
+                    (mats[2][speed_slice, :], mats[3][speed_slice, :])]   # draft 16
             drafts = ["calado 8.5", "calado 16"]
-        elif len(mats) >= 2:
+            
+            if vk_mats is not None and len(vk_mats) == 4:
+                vk_pairs = [(vk_mats[0][speed_slice, :], vk_mats[1][speed_slice, :]),
+                        (vk_mats[2][speed_slice, :], vk_mats[3][speed_slice, :])]
+            else:
+                vk_pairs = [None, None]
+                
+            if ang_mats is not None and len(ang_mats) == 4:
+                ang_pairs = [(ang_mats[0][speed_slice, :], ang_mats[1][speed_slice, :]),
+                            (ang_mats[2][speed_slice, :], ang_mats[3][speed_slice, :])]
+            else:
+                ang_pairs = [None, None]
+                
+        elif len(mats) == 2:
+            # 2 matrizes: apenas um calado (100, 180)
             pairs = [(mats[0][speed_slice, :], mats[1][speed_slice, :])]
-            drafts = ["calado 8.5"]
+            drafts = ["calado 16"]  # Ajustar para o calado correto
+            
+            if vk_mats is not None and len(vk_mats) == 2:
+                vk_pairs = [(vk_mats[0][speed_slice, :], vk_mats[1][speed_slice, :])]
+            else:
+                vk_pairs = [None]
+                
+            if ang_mats is not None and len(ang_mats) == 2:
+                ang_pairs = [(ang_mats[0][speed_slice, :], ang_mats[1][speed_slice, :])]
+            else:
+                ang_pairs = [None]
         else:
-            raise ValueError("force_matrix must contain at least two matrices (100 and 180).")
+            raise ValueError(f"Expected 2 or 4 matrices, got {len(mats)}. Matrix order should be: [draft1_100rpm, draft1_180rpm, draft2_100rpm, draft2_180rpm]")
 
         def integrate_between(Vvec, yvec, vmin, vmax, npoints=400):
-            # interpolate y on a fine grid between vmin and vmax and integrate
             xs = np.linspace(vmin, vmax, npoints)
             ys = np.interp(xs, Vvec, yvec)
             return np.trapz(ys, xs)
 
-        vmin, vmax = 3.0, 11.0  # highlighted interval
+        vmin, vmax = 3.0, 11.0
 
-        fig, axes = plt.subplots(1, len(pairs), figsize=(6 * len(pairs), 5), sharey=True)
+        # Criar subplots baseado no número de pares (calados)
+        fig, axes = plt.subplots(1, len(pairs), figsize=(8 * len(pairs), 6), sharey=True)
         if len(pairs) == 1:
             axes = [axes]
 
-        for ax, (mat100, mat180), draft_label in zip(axes, pairs, drafts):
-            # sum across angles (columns) for each velocity (row)
-            sum100 = np.nansum(mat100, axis=1)
-            sum180 = np.nansum(mat180, axis=1)
+        for ax_idx, ((mat100, mat180), draft_label) in enumerate(zip(pairs, drafts)):
+            ax = axes[ax_idx]
+            
+            print(f"[DEBUG] Processing {draft_label}: mat100 shape {mat100.shape}, mat180 shape {mat180.shape}")
+            
+            # Sum only specific angles for each velocity
+            sum100 = np.nansum(mat100[:, angle_indices], axis=1)
+            sum180 = np.nansum(mat180[:, angle_indices], axis=1)
 
-            # integrals over the highlighted interval
+            # Calculate statistics
             area100 = integrate_between(V, sum100, vmin, vmax)
             area180 = integrate_between(V, sum180, vmin, vmax)
+            
+            # Plot main lines
+            angles_str = ", ".join([f"{int(angle)}°" for angle in actual_angles])
+            line1 = ax.plot(V, sum100, marker="o", lw=2.5, markersize=8,
+                        label=f"100 RPM (área = {area100:.1f})", color="blue")
+            line2 = ax.plot(V, sum180, marker="s", lw=2.5, markersize=8,
+                        label=f"180 RPM (área = {area180:.1f})", color="red")
 
-            # main curves
-            line1, = ax.plot(V, sum100, marker="o", lw=2, label=f"100 RPM (area {vmin}-{vmax} m/s = {area100:.1f})", color="C0")
-            line2, = ax.plot(V, sum180, marker="s", lw=2, label=f"180 RPM (area {vmin}-{vmax} m/s = {area180:.1f})", color="C1")
+            # Corrigir a verificação das anotações - remover a verificação de ax_idx
+            if vk_pairs is not None and ang_pairs is not None and ax_idx < len(vk_pairs) and vk_pairs[ax_idx] is not None and ang_pairs[ax_idx] is not None:
+                print(f"[DEBUG] Adding annotations for {draft_label}")
+                
+                # Use the first matrix (100 RPM) since Vk and angles are the same for both
+                vk_ref = vk_pairs[ax_idx][0]  # vk100 for this draft
+                ang_ref = ang_pairs[ax_idx][0]  # ang100 for this draft
+                
+                print(f"[DEBUG] vk_ref shape: {vk_ref.shape}, ang_ref shape: {ang_ref.shape}")
+                
+                # Sample points for annotation
+                sample_indices = range(4, len(V), 6)  # Começar em 4 e a cada 6 pontos
+                
+                for i in sample_indices:
+                    if i < len(V) and i < vk_ref.shape[0]:
+                        # Calculate average Vk and angle for the target angles
+                        avg_vk = np.mean(vk_ref[i, angle_indices])
+                        avg_ang = np.mean(ang_ref[i, angle_indices])
+                        
+                        print(f"[DEBUG] Point {i}: V={V[i]:.1f}, Vk={avg_vk:.1f}, ang={avg_ang:.1f}")
+                        
+                        # Add vertical dashed line
+                        ax.axvline(x=V[i], ymin=0, ymax=1, color='gray', linestyle='--', 
+                                alpha=0.6, linewidth=1.5, zorder=1)
+                        
+                        # Add text annotation for EVERY vertical line
+                        # Find the y position at the top of the plot area
+                        # Find the y position at the top of the plot area
+                        y_plot_max = max(max(sum100), max(sum180))
+                        y_plot_min = min(min(sum100), min(sum180))
+                        y_range = y_plot_max - y_plot_min if y_plot_max != y_plot_min else abs(y_plot_max)
+                        
+                        # Position the text above the highest point
+                        text_y = y_plot_max + 0.15 * abs(y_range)
+                        
+                        # Ensure axis top limit includes the annotation (extend if needed)
+                        cur_ylim = ax.get_ylim()
+                        new_top = max(cur_ylim[1], text_y + 0.05 * max(1.0, abs(y_range)))
+                        if new_top != cur_ylim[1]:
+                            ax.set_ylim(cur_ylim[0], new_top)
+                        
+                        # draw vertical dashed line
+                        ax.axvline(x=V[i], ymin=0, ymax=1, color='gray', linestyle='--', 
+                                alpha=0.6, linewidth=1.5, zorder=1)
+                        
+                        # annotate with clip disabled so text outside axis is visible
+                        ax.annotate(
+                            f'Vk={avg_vk:.1f}\nθ={avg_ang:.0f}°',
+                            xy=(V[i], y_plot_max),               # arrow point (data coords)
+                            xytext=(0, 8),                       # offset in points from xy
+                            textcoords='offset points',
+                            fontsize=8,
+                            ha='center', va='bottom',
+                            bbox=dict(boxstyle='round,pad=0.3', facecolor='lightgray',
+                                    alpha=0.9, edgecolor='gray', linewidth=0.8),
+                            arrowprops=dict(arrowstyle='->', color='gray', alpha=0.7, lw=0.8),
+                            clip_on=False,
+                            zorder=5
+                        )
+            else:
+                print(f"[DEBUG] No annotations for {draft_label}")
+                print(f"[DEBUG] - vk_pairs: {vk_pairs}")
+                print(f"[DEBUG] - ang_pairs: {ang_pairs}")
+                print(f"[DEBUG] - ax_idx: {ax_idx}, len(vk_pairs): {len(vk_pairs) if vk_pairs else 'None'}")
 
-            # shade the vertical band
+            # Styling
             ax.axvspan(vmin, vmax, color="grey", alpha=0.15)
-
-            # fill area under each curve only inside the highlighted interval
-            xs = np.linspace(vmin, vmax, 300)
-            y100i = np.interp(xs, V, sum100)
-            y180i = np.interp(xs, V, sum180)
-            ax.fill_between(xs, y100i, alpha=0.12, color="C0")
-            ax.fill_between(xs, y180i, alpha=0.12, color="C1")
-
-            # dashed horizontal line at y=0 (extra highlight)
-            ax.axhline(0.0, color="k", linestyle="--", linewidth=1.2, alpha=0.9, zorder=5)
-
-            ax.set_xlabel("Wind speed (m/s)")
-            ax.set_title(f"Soma de forças vs velocidade — {draft_label}")
+            ax.axhline(0.0, color="k", linestyle="--", linewidth=1, alpha=0.7)
+            
+            ax.set_xlabel("Velocidade do vento (m/s)", fontsize=12)
+            ax.set_title(f"Forças ({angles_str}) — {draft_label}", fontsize=13)
             ax.grid(alpha=0.3)
-            ax.legend(loc="best", fontsize=9)
-            ax.set_xlim(V[0], V[-1])
-
-        axes[0].set_ylabel("Soma das forças (kN)")
-
-        plt.suptitle("Comparação: soma de forças (ângulos) vs velocidade\n(interv. destacado: 3–11 m/s, integral mostrada na legenda)")
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-
+            ax.legend(loc="lower right", bbox_to_anchor=(0.98, 0.02), fontsize=10, framealpha=0.9, borderaxespad=0.4)
+        axes[0].set_ylabel("Soma das forças (kN)", fontsize=12)
+        
+        plt.suptitle(f"Força para ângulos específicos: {', '.join(map(str, target_angles))}°\n" +
+                    f"(Linhas tracejadas: Vk = velocidade relativa, θrel = ângulo relativo)", 
+                    fontsize=14)
+        plt.tight_layout()
+        
         os.makedirs("figures", exist_ok=True)
-        out_path = "figures/sum_forces_vs_velocity_compare.png"
-        fig.savefig(out_path, dpi=200, bbox_inches="tight")
+        out_path = f"figures/forces_angles_{'_'.join(map(str, target_angles))}_with_vertical_annotations.png"
+        fig.savefig(out_path, dpi=200, bbox_inches="tight", facecolor='white')
         plt.show()
         plt.close(fig)
-        return
+        
+        return angle_indices, actual_angles
 
 def main():
     parser = argparse.ArgumentParser(description="Wind Route Creator")
     parser.add_argument("--ship", required=True, help="afra or suez")
     parser.add_argument("--plot", action="store_true", help="Plot graphics")
+    parser.add_argument("--modified-matrix", action="store_true", help="Translate velocities +3 m/s from probability matrix")
 
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
     imo_data_path = "../imo_guidance/global_prob_matrix.csv"
     forces_data_path = f"../{ship}/forces_CFD.csv"
-    rotations = [100]
+    rotations = [100, 180]
     drafts = [16]
     force_matrix = []
+    vk_matrix = []
+    ang_matrix = [] 
     for draft in drafts:
         for rotation in rotations:
             print(f"[INFO] Testing for draft = {draft} and rotation = {rotation}")
@@ -745,15 +891,25 @@ def main():
                 imo_data_path=imo_data_path,
                 forces_data_path=forces_data_path,
                 rotation=rotation,
-                draft=draft
+                draft=draft,
+                modified=args.modified_matrix
             )
             force_matrix.append(get_gain.run())
+            vk_matrix.append(get_gain.V_k_mat)
+            ang_matrix.append(get_gain.rel_angls)
 
-
-            if args.plot: get_gain.plot_graphics()
+            if args.plot: 
+                get_gain.plot_graphics()
         
-    get_gain.plot_wind_profiles()
-    get_gain.compare_common_force(force_matrix)
+    # get_gain.plot_wind_profiles()
+    
+    # Passar as matrizes de Vk e ângulo para o método de comparação
+    get_gain.compare_common_force(force_matrix, target_angles=[60], 
+                                 vk_mats=vk_matrix, ang_mats=ang_matrix)
+    get_gain.compare_common_force(force_matrix, target_angles=[90], 
+                                 vk_mats=vk_matrix, ang_mats=ang_matrix)
+    get_gain.compare_common_force(force_matrix, target_angles=[120], 
+                                 vk_mats=vk_matrix, ang_mats=ang_matrix)
 
 if __name__ == "__main__":
     main()
