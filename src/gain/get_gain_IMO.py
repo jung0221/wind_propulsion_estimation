@@ -3,20 +3,17 @@ import numpy as np
 import bisect
 import argparse
 import matplotlib.pyplot as plt
-from matplotlib import cm
+import os
 
 class GainIMO:
-    def __init__(self, xls_data_path, imo_data_path, forces_data_path, rotation, draft):
-        xls_csv = pd.read_excel(xls_data_path, sheet_name="Ganho")
-        p_cons = xls_csv["P_rotor kW"]
+    def __init__(self, imo_data_path, forces_data_path, rotation, draft):
         self.imo_df = pd.read_csv(imo_data_path)
-        self.thrust_df = pd.read_csv(forces_data_path).iloc[:, 2:]
+        self.thrust_df = pd.read_csv(forces_data_path)
         self.thrust_df["Angulo"] = np.where(
         self.thrust_df["Angulo"] <= 180, 
         180 - self.thrust_df["Angulo"], 
         540 - self.thrust_df["Angulo"]
         ) % 360
-        self.thrust_df["Pcons"] = p_cons
         self.moments = (
             self.thrust_df["Mz_popa_bom"]
             + self.thrust_df["Mz_popa_bor"]
@@ -42,7 +39,6 @@ class GainIMO:
         
         # Carregar dados para 100 RPM
         get_gain_100 = GainIMO(
-            xls_data_path="../abdias_suez/CFD_Jung.xlsx",
             imo_data_path="../imo_guidance/global_prob_matrix.csv", 
             forces_data_path=f"../{ship}/forces_CFD.csv",
             rotation=100,
@@ -52,7 +48,6 @@ class GainIMO:
         
         # Carregar dados para 180 RPM
         get_gain_180 = GainIMO(
-            xls_data_path="../abdias_suez/CFD_Jung.xlsx",
             imo_data_path="../imo_guidance/global_prob_matrix.csv",
             forces_data_path=f"../{ship}/forces_CFD.csv", 
             rotation=180,
@@ -62,12 +57,125 @@ class GainIMO:
         
         return get_gain_100, get_gain_180
 
+    def plot_wind_profiles(self, v10_list=(5, 10, 15), z_min=1.0, z_max=120.0, npoints=300,
+                        method='power', alpha=1/7, z0=0.03, z_ref=10.0,
+                        cmap='viridis', out_folder='figures',
+                        fname=None, show=True):
+        """
+        Plot wind speed profiles V(z) extrapolated from V(10m) for several V10 values.
+        Uses power-law (default) or log-law. Marks rotor height extrapolated speeds
+        using self.extrapolated_wind_vel for reference (if present).
+        """
+        import os
+        os.makedirs(out_folder, exist_ok=True)
+
+        heights = np.linspace(z_min, z_max, npoints)
+        cmap_obj = plt.get_cmap(cmap)
+        colors = [cmap_obj(i / max(1, len(v10_list) - 1)) for i in range(len(v10_list))]
+
+        plt.style.use("seaborn-v0_8-muted")
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        # rotor height used by extrapolated_wind_vel (same logic)
+        z_rotor = 27.7 if self.draft == 16.0 else 35.5
+
+        for i, V10 in enumerate(v10_list):
+            if method == 'power':
+                Vz = V10 * (heights / z_ref) ** alpha
+                label = "$V_{10m}=$" + f"{V10} m/s"
+            else:  # log-law
+                zz = np.maximum(heights, z0 * 1.0001)
+                denom = np.log(z_ref / z0)
+                Vz = V10 * np.log(zz / z0) / denom
+                label = "$V_{10m}=$" + f"{V10} m/s"
+
+            ax.plot(Vz, heights, color=colors[i], lw=2, label=label)
+
+            # mark rotor height using class extrapolation if available
+            try:
+                V_rot_ex = float(self.extrapolated_wind_vel(np.array([V10])))
+            except Exception:
+                V_rot_ex = V10 * (z_rotor / z_ref) ** alpha if method == 'power' else V10 * np.log(z_rotor / z0) / np.log(z_ref / z0)
+
+            ax.scatter([V_rot_ex], [z_rotor], color=colors[i], s=50, edgecolor='k', zorder=5)
+
+        # optionally show mapping of self.V_wind -> self.V_wz if present (as markers)
+        if hasattr(self, "V_wind"):
+            try:
+                Vwz = self.extrapolated_wind_vel(self.V_wind)
+                ax.scatter(Vwz, np.full_like(Vwz, z_rotor * 0.98), c='k', s=10, alpha=0.6, label="Ponto médio do rotor ($T = 16m$)")
+            except Exception:
+                pass
+
+        ax.axvspan(3.0, 11.0, color='grey', alpha=0.08, zorder=0)
+        ax.set_xlabel("Velocidade do vento (m/s)")
+        ax.set_ylabel("Altura (m)")
+        ax.set_ylim(z_min, z_max)
+        ax.set_title("Perfis de velocidade de vento $V_{10m}$ extrapolados")
+        ax.grid(which='both', linestyle='--', alpha=0.5)
+        ax.legend(fontsize=9, loc='best')
+
+        if fname is None:
+            fname = f"wind_profiles_calado_{self.draft}_method_{method}.png"
+        out_path = os.path.join(out_folder, fname)
+        fig.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
+        if show:
+            plt.show()
+        plt.close(fig)
+        return out_path
+    def plot_wind_extrapolation(self, v10_list, z_min=1.0, z_max=100.0, npoints=300,
+                                method='power', alpha=1/7, z0=0.03, z_ref=10.0,
+                                cmap='viridis', out_folder='figures',
+                                fname='wind_profile_extrapolation.png', show=True):
+        
+        os.makedirs(out_folder, exist_ok=True)
+        heights = np.linspace(z_min, z_max, npoints)
+        cmap_obj = plt.get_cmap(cmap)
+        colors = [cmap_obj(i / max(1, len(v10_list)-1)) for i in range(len(v10_list))]
+
+        plt.style.use("seaborn-v0_8-muted")
+        fig, ax = plt.subplots(figsize=(8, 6))
+
+        for i, V10 in enumerate(v10_list):
+            if method == 'power':
+                Vz = V10 * (heights / z_ref) ** alpha
+                label = f"V(10m)={V10} m/s — power (α={alpha:.3f})"
+            else:  # log-law
+                # evita divisão por zero: garantir heights>z0
+                zz = np.maximum(heights, z0 * 1.0001)
+                denom = np.log(z_ref / z0)
+                Vz = V10 * np.log(zz / z0) / denom
+                label = f"V(10m)={V10} m/s — log (z0={z0})"
+
+            ax.plot(Vz, heights, color=colors[i], lw=2, label=label)
+            ax.scatter([V10], [z_ref], color=colors[i], s=30, edgecolor='k', zorder=5)  # marca referência
+
+        # destaque intervalo exemplo 3..11 m/s em grid vertical (opcional)
+        ax.axvspan(3.0, 11.0, color='grey', alpha=0.08, zorder=0)
+
+        ax.set_xlabel("Velocidade do vento (m/s)")
+        ax.set_ylabel("Altura (m)")
+        ax.set_ylim(z_min, z_max)
+        ax.set_title("Perfis de velocidade extrapolados a partir de V(10m)")
+        ax.grid(which='both', linestyle='--', alpha=0.5)
+        ax.legend(fontsize=9, loc='best')
+        plt.tight_layout()
+
+        out_path = os.path.join(out_folder, fname)
+        fig.savefig(out_path, dpi=300, bbox_inches='tight', facecolor='white')
+        if show:
+            plt.show()
+        plt.close(fig)
+        return out_path
     def plot_power_comparison(self, ship):
         """Plot comprehensive comparison between 100 RPM and 180 RPM power consumption"""
         
         # Carregar dados para ambas as rotações
         gain_100, gain_180 = self.load_power_matrices_comparison(ship)
         
+        useful_forces = self.forces_k[2:11]
+        
+
         # Calcular matrizes de potência para ambas as rotações
         power_100 = np.zeros((len(self.V_wind), len(self.wind_angles)))
         power_180 = np.zeros((len(self.V_wind), len(self.wind_angles)))
@@ -197,89 +305,68 @@ class GainIMO:
         return floor_angle, ceil_angle
 
     def get_forces(self, ang, vel, force="fx", coef_dir="cx"):
+        """
+        Robust interpolation of force and coefficient for given angle (deg) and velocity (m/s).
+        - Uses get_adjacent_angles to get floor/ceil angles
+        - Selects rows for those angles (correct rotation/draft)
+        - Interpolates force over Vw with np.interp
+        - Interpolates force over angle with proper wrap-around handling
+        Returns: (f (kN), coef_x)
+        """
+        ang = float(ang) % 360.0
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
-        ceil_ang = ceil_angle
-        floor_forces = self.thrust_df[
-            (self.thrust_df["Angulo"] == floor_angle)
-            & (self.thrust_df["Calado"] == self.draft)
-            & (self.thrust_df["Rotacao"] == self.rotation)
-        ]
-        ceil_forces = self.thrust_df[
-            (self.thrust_df["Angulo"] == ceil_ang)
-            & (self.thrust_df["Calado"] == self.draft)
-            & (self.thrust_df["Rotacao"] == self.rotation)
-        ]
 
-        if ang < 360 and ang > 330: 
-            ceil_angle = 360
-            ceil_ang = 0
-            floor_angle = 330
+        # For angular interpolation treat ceil=0 as 360 (for distance calc) but selection uses 0
+        ang_floor = float(floor_angle)
+        ang_ceil_for_select = 0 if float(ceil_angle) == 360 or float(ceil_angle) == 0 else float(ceil_angle)
+        ang_ceil_for_interp = float(ceil_angle) if float(ceil_angle) != 0 else 360.0
 
+        def get_sorted_rows(angle_sel):
+            sel = self.thrust_df[
+                (self.thrust_df["Angulo"] == angle_sel) &
+                (self.thrust_df["Calado"] == self.draft) &
+                (self.thrust_df["Rotacao"] == self.rotation)
+            ]
+            if sel.empty:
+                raise ValueError(f"No data for angle={angle_sel}, draft={self.draft}, rot={self.rotation}")
+            sel = sel.sort_values("Vw")
+            return sel
 
-        if ang < 30 and ang > 0: 
-            ceil_angle = 30
-            floor_angle = 0
+        # select rows AFTER angles resolved
+        floor_sel = get_sorted_rows(int(ang_floor) % 360)
+        ceil_sel = get_sorted_rows(int(ang_ceil_for_select) % 360)
 
-        if vel >= 6 and vel <= 10:
-            fx_ceil = ceil_forces[force].iloc[0] + (vel - ceil_forces["Vw"].iloc[0]) * (
-                ceil_forces[force].iloc[1] - ceil_forces[force].iloc[0]
-            ) / (ceil_forces["Vw"].iloc[1] - ceil_forces["Vw"].iloc[0])
-            fx_floor = floor_forces[force].iloc[0] + (
-                vel - floor_forces["Vw"].iloc[0]
-            ) * (floor_forces[force].iloc[1] - floor_forces[force].iloc[0]) / (
-                floor_forces["Vw"].iloc[1] - floor_forces["Vw"].iloc[0]
-            )
-            if ceil_angle != floor_angle:
-                f = fx_floor + (ang - floor_angle) * (fx_ceil - fx_floor) / (
-                    ceil_angle - floor_angle
-                )
-            else:
-                f = fx_floor
-            coef_x = f / (0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000)
-            return f, coef_x
+        # Arrays for interpolation along Vw
+        Vw_floor = floor_sel["Vw"].to_numpy(dtype=float)
+        F_floor = floor_sel[force].to_numpy(dtype=float)
+        Vw_ceil = ceil_sel["Vw"].to_numpy(dtype=float)
+        F_ceil = ceil_sel[force].to_numpy(dtype=float)
 
-        elif vel > 10 and vel <= 12:
-            fx_ceil = ceil_forces[force].iloc[1] + (vel - ceil_forces["Vw"].iloc[1]) * (
-                ceil_forces[force].iloc[2] - ceil_forces[force].iloc[1]
-            ) / (ceil_forces["Vw"].iloc[2] - ceil_forces["Vw"].iloc[1])
-            fx_floor = floor_forces[force].iloc[1] + (
-                vel - floor_forces["Vw"].iloc[1]
-            ) * (floor_forces[force].iloc[2] - floor_forces[force].iloc[1]) / (
-                floor_forces["Vw"].iloc[2] - floor_forces["Vw"].iloc[1]
-            )
-            if ceil_angle != floor_angle:
-                f = fx_floor + (ang - floor_angle) * (fx_ceil - fx_floor) / (
-                    ceil_angle - floor_angle
-                )
-            else:
-                f = fx_floor
-            coef_x = f / (0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000)
-            return f, coef_x
-        
-        elif vel < 6:
-            coef_x_floor = floor_forces[floor_forces["Vw"] == 6][coef_dir].values[0]
-            coef_x_ceil = ceil_forces[ceil_forces["Vw"] == 6][coef_dir].values[0]
-            if ceil_angle != floor_angle:
-                coef_x = coef_x_floor + (ang - floor_angle) * (
-                    coef_x_ceil - coef_x_floor
-                ) / (ceil_angle - floor_angle)
-            else:
-                coef_x = coef_x_floor
-            f = coef_x * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
-            return f, coef_x
+        # If vel outside the Vw range, np.interp returns edge value (that's fine here).
+        f_floor_at_vel = np.interp(vel, Vw_floor, F_floor)
+        f_ceil_at_vel = np.interp(vel, Vw_ceil, F_ceil)
 
-        elif vel > 12:
-            coef_x_floor = floor_forces[floor_forces["Vw"] == 12][coef_dir].values[0]
-            coef_x_ceil = ceil_forces[ceil_forces["Vw"] == 12][coef_dir].values[0]
-            if ceil_angle != floor_angle:
-                coef_x = coef_x_floor + (ang - floor_angle) * (
-                    coef_x_ceil - coef_x_floor
-                ) / (ceil_angle - floor_angle)
-            else:
-                coef_x = coef_x_floor
-            f = coef_x * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
-            return f, coef_x
-        
+        # Angular interpolation (handle wrap-around)
+        af = ang_floor
+        ac = ang_ceil_for_interp
+        # normalize so ac > af (if wrap occurred ac will be > af since ac==360)
+        if ac <= af:
+            ac += 360.0
+        a = ang if ang >= af else ang + 360.0
+        if ac == af:
+            frac = 0.0
+        else:
+            frac = (a - af) / (ac - af)
+            frac = np.clip(frac, 0.0, 1.0)
+
+        f = f_floor_at_vel + frac * (f_ceil_at_vel - f_floor_at_vel)
+
+        # compute coefficient consistent with how you use it (avoid divide-by-zero)
+        rho = 1.2
+        denom = 0.5 * rho * (vel ** 2) * self.Ax / 1000.0  # matches earlier scaling
+        coef_x = f / denom if denom > 0 else np.nan
+
+        return f, coef_x
     def get_power(self, ang, vel):
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
         if ceil_angle == 360:
@@ -447,74 +534,6 @@ class GainIMO:
         plt.tight_layout()
         plt.show()
 
-    def calculate_relative_ship_velocity(self, wind_angle, V_wz):
-        """
-        Calculate relative wind velocity using vector components.
-        Positive values = headwind, Negative values = tailwind
-        
-        rel_angle: angle in radians where wind is coming from (0 = from ahead)
-        V_wz: extrapolated wind velocity
-        """
-        u_ship = self.V_ship 
-        
-        u_wind = V_wz * -np.cos(wind_angle)
-        v_wind = V_wz * -np.sin(wind_angle)
-        
-        u_rel = u_ship - u_wind 
-        v_rel = v_wind
-        
-        rel_ang = np.degrees(np.arctan2(v_rel, u_rel)) % 360
-
-        return np.sqrt(np.power(u_rel, 2) + np.power(v_rel, 2)), rel_ang
-    def run(self):
-        self.V_wind = np.arange(1, 26)
-
-        V_wz = self.extrapolated_wind_vel(self.V_wind)
-
-        # Here, 0 are the wind coming from ship heading
-        self.wind_angles = np.arange(0, 360, 5)
-        first_term = 0
-        second_term = 0
-        third_term = 0
-        self.forces_k = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
-        self.forces_rotor_k = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
-        self.coefs_xk = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
-        
-        power_k = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
-        self.W_k = np.zeros((V_wz.shape[0], self.wind_angles.shape[0]))
-        soma_forces = 0
-        for i, wind_angle in enumerate(self.wind_angles):
-            self.Vk, ang = self.calculate_relative_ship_velocity(np.deg2rad(wind_angle), V_wz)
-            # Fix the angle reference for CFD
-            for j, (vel, angle) in enumerate(zip(self.Vk, ang)):
-                Pk = self.get_power(angle, vel)
-                Fxk, cxk = self.get_forces(angle, vel)
-                Fxk_rotor, cxk_rotor = self.get_forces(angle, vel, force='fx_rotores')
-                if Fxk >= self.RT:
-                    Fxk = self.RT
-                
-                self.forces_k[j][i] = Fxk
-                soma_forces += Fxk
-                self.forces_rotor_k[j][i] = Fxk_rotor
-                self.coefs_xk[j][i] = cxk
-                power_k[j][i] = Pk
-                self.W_k[j][i] = self.imo_df.loc[j, str(wind_angle)]
-                first_term += self.W_k[j][i]
-                second_term += (self.V_ship / self.eta_D) * Fxk * self.W_k[j][i]
-                third_term += Pk * self.W_k[j][i]
-        print(f"Soma de todas as forças: ", soma_forces)
-        print(f"Força: {second_term}")
-        print(f"Consumo: {third_term}")
-        
-        print(f"Razão do consumo pelo empuxo: {np.round(100*third_term/second_term)}%")
-        f_eff_P_eff = (1/first_term) * (second_term - third_term)
-        print(f"Primeiro termo: {first_term}")
-        print(f"f_eff_p_eff: {f_eff_P_eff}")
-        
-        print(f"Potência efetiva: {np.round(self.P_eff - f_eff_P_eff)} kW")
-        print(f"Ganho: {np.round(100*f_eff_P_eff/self.P_eff)}%")
-        return
-    
     def plot_cx_vs_velocity(self, angles=None):
         """
         Plot Cx (self.coefs_xk) behaviour along wind speed.
@@ -548,6 +567,75 @@ class GainIMO:
         plt.tight_layout()
         plt.show()
 
+    def calculate_relative_ship_velocity(self, wind_angle, V_wz):
+        """
+        Calculate relative wind velocity using vector components.
+        Positive values = headwind, Negative values = tailwind
+        
+        rel_angle: angle in radians where wind is coming from (0 = from ahead)
+        V_wz: extrapolated wind velocity
+        """
+        u_ship = self.V_ship 
+        
+        u_wind = V_wz * -np.cos(wind_angle)
+        v_wind = V_wz * -np.sin(wind_angle)
+        
+        u_rel = u_ship - u_wind 
+        v_rel = v_wind
+        
+        rel_ang = np.degrees(np.arctan2(v_rel, u_rel)) % 360
+
+        return np.sqrt(np.power(u_rel, 2) + np.power(v_rel, 2)), rel_ang
+    
+    def run(self):
+        self.V_wind = np.arange(1, 26)
+
+        self.V_wz = self.extrapolated_wind_vel(self.V_wind)
+
+        # Here, 0 are the wind coming from ship heading
+        self.wind_angles = np.arange(0, 360, 5)
+        first_term = 0
+        second_term = 0
+        third_term = 0
+        self.forces_k = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
+        self.forces_rotor_k = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
+        self.coefs_xk = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
+        
+        power_k = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
+        self.W_k = np.zeros((self.V_wz.shape[0], self.wind_angles.shape[0]))
+        soma_forces = 0
+        for i, wind_angle in enumerate(self.wind_angles):
+            self.Vk, ang = self.calculate_relative_ship_velocity(np.deg2rad(wind_angle), self.V_wz)
+            # Fix the angle reference for CFD
+            for j, (vel, angle) in enumerate(zip(self.V_wind, ang)):
+                Pk = self.get_power(angle, vel)
+                Fxk, cxk = self.get_forces(angle, vel)
+                Fxk_rotor, cxk_rotor = self.get_forces(angle, vel, force='fx_rotores')
+                if Fxk >= self.RT:
+                    Fxk = self.RT
+                
+                self.forces_k[j][i] = Fxk
+                soma_forces += Fxk
+                self.forces_rotor_k[j][i] = Fxk_rotor
+                self.coefs_xk[j][i] = cxk
+                power_k[j][i] = Pk
+                self.W_k[j][i] = self.imo_df.loc[j, str(wind_angle)]
+                first_term += self.W_k[j][i]
+                second_term += (self.V_ship / self.eta_D) * Fxk * self.W_k[j][i]
+                third_term += Pk * self.W_k[j][i]
+        print(f"Soma de todas as forças: ", soma_forces)
+        print(f"Força: {second_term}")
+        print(f"Consumo: {third_term}")
+        print("Soma de forças", np.sum(self.forces_k[2:11]))
+        print(f"Razão do consumo pelo empuxo: {np.round(100*third_term/second_term)}%")
+        f_eff_P_eff = (1/first_term) * (second_term - third_term)
+        print(f"Primeiro termo: {first_term}")
+        print(f"f_eff_p_eff: {f_eff_P_eff}")
+        
+        print(f"Potência efetiva: {np.round(self.P_break - f_eff_P_eff)} kW")
+        print(f"Ganho: {np.round(100*f_eff_P_eff/self.P_break)}%")
+        return self.forces_k
+    
     def plot_graphics(self):
         # Cx, Cz plots
         self.plot_cx_vs_velocity(angles=[30, 60, 90])
@@ -556,7 +644,86 @@ class GainIMO:
         self.heatmap_plot(self.W_k, self.V_wind)
         self.plot_velocity_comparison()
         self.plot_velocity_summary() 
-        
+
+    def compare_common_force(self, mats):
+        """
+        Plot total (sum over angles) force vs wind speed for the rotations (100/180)
+        and for each draft present in mats (which can contain 2 or 4 matrices).
+        Highlights the speed interval 3..11 m/s and shows the integral over that interval
+        in the legend.
+        """
+
+        speed_slice = slice(0, 25)
+        V = np.asarray(self.V_wind)[speed_slice]
+
+        # ensure numpy arrays
+        mats = [np.asarray(m) for m in mats]
+
+        if len(mats) >= 4:
+            pairs = [(mats[0][speed_slice, :], mats[1][speed_slice, :]),
+                    (mats[2][speed_slice, :], mats[3][speed_slice, :])]
+            drafts = ["calado 8.5", "calado 16"]
+        elif len(mats) >= 2:
+            pairs = [(mats[0][speed_slice, :], mats[1][speed_slice, :])]
+            drafts = ["calado 8.5"]
+        else:
+            raise ValueError("force_matrix must contain at least two matrices (100 and 180).")
+
+        def integrate_between(Vvec, yvec, vmin, vmax, npoints=400):
+            # interpolate y on a fine grid between vmin and vmax and integrate
+            xs = np.linspace(vmin, vmax, npoints)
+            ys = np.interp(xs, Vvec, yvec)
+            return np.trapz(ys, xs)
+
+        vmin, vmax = 3.0, 11.0  # highlighted interval
+
+        fig, axes = plt.subplots(1, len(pairs), figsize=(6 * len(pairs), 5), sharey=True)
+        if len(pairs) == 1:
+            axes = [axes]
+
+        for ax, (mat100, mat180), draft_label in zip(axes, pairs, drafts):
+            # sum across angles (columns) for each velocity (row)
+            sum100 = np.nansum(mat100, axis=1)
+            sum180 = np.nansum(mat180, axis=1)
+
+            # integrals over the highlighted interval
+            area100 = integrate_between(V, sum100, vmin, vmax)
+            area180 = integrate_between(V, sum180, vmin, vmax)
+
+            # main curves
+            line1, = ax.plot(V, sum100, marker="o", lw=2, label=f"100 RPM (area {vmin}-{vmax} m/s = {area100:.1f})", color="C0")
+            line2, = ax.plot(V, sum180, marker="s", lw=2, label=f"180 RPM (area {vmin}-{vmax} m/s = {area180:.1f})", color="C1")
+
+            # shade the vertical band
+            ax.axvspan(vmin, vmax, color="grey", alpha=0.15)
+
+            # fill area under each curve only inside the highlighted interval
+            xs = np.linspace(vmin, vmax, 300)
+            y100i = np.interp(xs, V, sum100)
+            y180i = np.interp(xs, V, sum180)
+            ax.fill_between(xs, y100i, alpha=0.12, color="C0")
+            ax.fill_between(xs, y180i, alpha=0.12, color="C1")
+
+            # dashed horizontal line at y=0 (extra highlight)
+            ax.axhline(0.0, color="k", linestyle="--", linewidth=1.2, alpha=0.9, zorder=5)
+
+            ax.set_xlabel("Wind speed (m/s)")
+            ax.set_title(f"Soma de forças vs velocidade — {draft_label}")
+            ax.grid(alpha=0.3)
+            ax.legend(loc="best", fontsize=9)
+            ax.set_xlim(V[0], V[-1])
+
+        axes[0].set_ylabel("Soma das forças (kN)")
+
+        plt.suptitle("Comparação: soma de forças (ângulos) vs velocidade\n(interv. destacado: 3–11 m/s, integral mostrada na legenda)")
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+
+        os.makedirs("figures", exist_ok=True)
+        out_path = "figures/sum_forces_vs_velocity_compare.png"
+        fig.savefig(out_path, dpi=200, bbox_inches="tight")
+        plt.show()
+        plt.close(fig)
+        return
 
 def main():
     parser = argparse.ArgumentParser(description="Wind Route Creator")
@@ -566,25 +733,27 @@ def main():
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
-    xls_data_path = "../abdias_suez/CFD_Jung.xlsx"
     imo_data_path = "../imo_guidance/global_prob_matrix.csv"
     forces_data_path = f"../{ship}/forces_CFD.csv"
-    rotations = [100, 180]
-    drafts = [8.5, 16]
-    
-    for rotation in rotations:
-        for draft in drafts:
+    rotations = [100]
+    drafts = [16]
+    force_matrix = []
+    for draft in drafts:
+        for rotation in rotations:
             print(f"[INFO] Testing for draft = {draft} and rotation = {rotation}")
             get_gain = GainIMO(
-                xls_data_path=xls_data_path,
                 imo_data_path=imo_data_path,
                 forces_data_path=forces_data_path,
                 rotation=rotation,
                 draft=draft
             )
-            get_gain.run()
+            force_matrix.append(get_gain.run())
+
+
             if args.plot: get_gain.plot_graphics()
-    # get_gain.plot_power_comparison(ship)
+        
+    get_gain.plot_wind_profiles()
+    get_gain.compare_common_force(force_matrix)
 
 if __name__ == "__main__":
     main()
