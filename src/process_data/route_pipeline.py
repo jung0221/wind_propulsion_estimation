@@ -2,14 +2,13 @@ import xarray as xr
 import pandas as pd
 import numpy as np
 import os
-import folium
+import gc
 from tqdm import tqdm
 import argparse
 import threading
 import bisect
-
-
 class ProcessMap:
+    _ds_path = None
     def __init__(self, timestamp, route_path, wind_path, forces_path, ship, rotation):
         self.timestamp = timestamp
         self.route_path = route_path
@@ -40,14 +39,25 @@ class ProcessMap:
 
         print(f'[INFO] Loading wind data for ship {self.ship} with speed {self.vs_kns} knots')
         self.ds = xr.open_dataset(self.wind_path, engine='cfgrib')
-        if self.current_month != self.timestamp.month or self.ds is None:
-            self.current_month = self.timestamp.month
-            # Construct the path for the current month's GRIB file
-            month_wind_path = f'{os.path.dirname(self.wind_path)}/{self.timestamp.year}_{int(self.current_month)}.grib'  # Adjust path format as needed
-            self.ds = xr.open_dataset(month_wind_path, engine='cfgrib')
-            print(f'[INFO] Loaded wind data for month {self.current_month}')
-
-        if not self.df:
+        # Only open dataset when needed (cache per-instance). Close previous ds if month changes.
+        month_wind_path = f'{os.path.dirname(self.wind_path)}/{self.timestamp.year}_{int(self.timestamp.month)}.grib'
+        if self.ds is None or ProcessMap._ds_path != month_wind_path:
+            # close existing ds to avoid leaks
+            try:
+                if self.ds is not None:
+                    self.ds.close()
+            except Exception:
+                pass
+            try:
+                self.ds = xr.open_dataset(month_wind_path, engine='cfgrib')
+                ProcessMap._ds_path = month_wind_path
+                self.current_month = self.timestamp.month
+                print(f'[INFO] Loaded wind data for month {self.current_month} from {month_wind_path}')
+            except Exception as e:
+                print(f'[ERROR] Opening wind file {month_wind_path}: {e}')
+                self.ds = None
+                ProcessMap._ds_path = None
+        if self.df is None:
             print('[INFO] Loading route data')
             df_original = pd.read_csv(self.route_path, sep=';')
             # Criar DataFrame com ida e volta
@@ -60,7 +70,7 @@ class ProcessMap:
             # Concatenar ida e volta
             self.df = pd.concat([df_ida, df_volta], ignore_index=True)
 
-        if not self.df_forces:
+        if self.df_forces is None:
             try:
                 print("[INFO] Loading thrust data")
                 self.df_forces = pd.read_csv(self.forces_path, index_col=0)
@@ -177,92 +187,85 @@ class ProcessMap:
             floor_angle = self.angle_list[pos - 1]
             ceil_angle = self.angle_list[pos]
         return floor_angle, ceil_angle
-
-    def get_forces(self, ang, vel, force="fx", coef_dir="cx"):
+    
+    def get_forces(self, ang, vel, force="fx", draft=None):
+        ang = float(ang) % 360.0
+        # use provided draft if passed, otherwise use self.draft
+        draft_local = self.draft if draft is None else draft
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
-        if ceil_angle == 360:
-            ceil_angle = 0
-        floor_forces = self.df_forces[
-            (self.df_forces["Angulo"] == floor_angle)
-            & (self.df_forces["Calado"] == self.draft)
-            & (self.df_forces["Rotacao"] == self.rotation)
-        ]
 
-        ceil_forces = self.df_forces[
-            (self.df_forces["Angulo"] == ceil_angle)
-            & (self.df_forces["Calado"] == self.draft)
-            & (self.df_forces["Rotacao"] == self.rotation)
-        ]
-        if vel >= 6 and vel <= 10:
-            fx_ceil = ceil_forces[force].iloc[0] + (vel - ceil_forces["Vw"].iloc[0]) * (
-                ceil_forces[force].iloc[1] - ceil_forces[force].iloc[0]
-            ) / (ceil_forces["Vw"].iloc[1] - ceil_forces["Vw"].iloc[0])
-            fx_floor = floor_forces[force].iloc[0] + (
-                vel - floor_forces["Vw"].iloc[0]
-            ) * (floor_forces[force].iloc[1] - floor_forces[force].iloc[0]) / (
-                floor_forces["Vw"].iloc[1] - floor_forces["Vw"].iloc[0]
-            )
-            if ceil_angle != floor_angle:
-                f = fx_floor + (ang - floor_angle) * (fx_ceil - fx_floor) / (
-                    ceil_angle - floor_angle
-                )
-            else:
-                f = fx_floor
+        # For angular interpolation treat ceil=0 as 360 (for distance calc) but selection uses 0
+        ang_floor = float(floor_angle)
+        ang_ceil_for_select = 0 if float(ceil_angle) == 360 or float(ceil_angle) == 0 else float(ceil_angle)
+        ang_ceil_for_interp = float(ceil_angle) if float(ceil_angle) != 0 else 360.0
 
-        elif vel > 10 and vel <= 12:
-            fx_ceil = ceil_forces[force].iloc[1] + (vel - ceil_forces["Vw"].iloc[1]) * (
-                ceil_forces[force].iloc[2] - ceil_forces[force].iloc[1]
-            ) / (ceil_forces["Vw"].iloc[2] - ceil_forces["Vw"].iloc[1])
-            fx_floor = floor_forces[force].iloc[1] + (
-                vel - floor_forces["Vw"].iloc[1]
-            ) * (floor_forces[force].iloc[2] - floor_forces[force].iloc[1]) / (
-                floor_forces["Vw"].iloc[2] - floor_forces["Vw"].iloc[1]
-            )
-            if ceil_angle != floor_angle:
-                f = fx_floor + (ang - floor_angle) * (fx_ceil - fx_floor) / (
-                    ceil_angle - floor_angle
-                )
-            else:
-                f = fx_floor
+        def get_sorted_rows(angle_sel):
+            sel = self.df_forces[
+                (self.df_forces["Angulo"] == angle_sel) &
+                (self.df_forces["Calado"] == draft_local) &
+                (self.df_forces["Rotacao"] == self.rotation)
+            ]
+            if sel.empty:
+                raise ValueError(f"No data for angle={angle_sel}, draft={draft_local}, rot={self.rotation}")
+            sel = sel.sort_values("Vw")
+            return sel
 
+        # select rows AFTER angles resolved
+        floor_sel = get_sorted_rows(int(ang_floor) % 360)
+        ceil_sel = get_sorted_rows(int(ang_ceil_for_select) % 360)
+
+        # Arrays for interpolation along Vw
+        Vw_floor = floor_sel["Vw"].to_numpy(dtype=float)
+        F_floor = floor_sel[force].to_numpy(dtype=float)
+        Vw_ceil = ceil_sel["Vw"].to_numpy(dtype=float)
+        F_ceil = ceil_sel[force].to_numpy(dtype=float)
+
+        # Force for floor angle 
+        f_floor_at_vel = np.interp(vel, Vw_floor, F_floor)
+
+        # Force for ceil angle 
+        f_ceil_at_vel = np.interp(vel, Vw_ceil, F_ceil)
+
+        # Angular interpolation (handle wrap-around)
+        af = ang_floor
+        ac = ang_ceil_for_interp
+        # normalize so ac > af (if wrap occurred ac will be > af since ac==360)
+        if ac <= af:
+            ac += 360.0
+        a = ang if ang >= af else ang + 360.0
+        if ac == af:
+            frac = 0.0
+        else:
+            frac = (a - af) / (ac - af)
+            frac = np.clip(frac, 0.0, 1.0)
+            f = f_floor_at_vel + frac * (f_ceil_at_vel - f_floor_at_vel)
+        if vel >=6 and vel <= 12:
+            return f
         elif vel < 6:
-            coef_x_floor = floor_forces[floor_forces["Vw"] == 6][coef_dir].values[0]
-            coef_x_ceil = ceil_forces[ceil_forces["Vw"] == 6][coef_dir].values[0]
-            if ceil_angle != floor_angle:
-                coef_x = coef_x_floor + (ang - floor_angle) * (
-                    coef_x_ceil - coef_x_floor
-                ) / (ceil_angle - floor_angle)
-            else:
-                coef_x = coef_x_floor
-            f = coef_x * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
+            denom = 0.5 * 1.2 * (6 ** 2) * self.Ax / 1000.0
+        else: 
+            denom = 0.5 * 1.2 * (12 ** 2) * self.Ax / 1000.0
 
-        elif vel > 12:
-            coef_x_floor = floor_forces[floor_forces["Vw"] == 12][coef_dir].values[0]
-            coef_x_ceil = ceil_forces[ceil_forces["Vw"] == 12][coef_dir].values[0]
-            if ceil_angle != floor_angle:
-                coef_x = coef_x_floor + (ang - floor_angle) * (
-                    coef_x_ceil - coef_x_floor
-                ) / (ceil_angle - floor_angle)
-            else:
-                coef_x = coef_x_floor
-            f = coef_x * 0.5 * 1.2 * np.power(vel, 2) * self.Ax / 1000
-
-        return f
+        coef_x = f / denom if denom > 0 else np.nan
+        new_f = coef_x * 0.5 * 1.2 * (vel ** 2) * self.Ax / 1000.0
+        return new_f
 
 
-    def get_power_rotor(self, ang, vel, moment="Mz_rotor", coef_dir="cz"):
+    def get_power_rotor(self, ang, vel, moment="Mz_rotor", draft=None):
+        # allow draft override for parallel workers
+        draft_local = self.draft if draft is None else draft
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
         if ceil_angle == 360:
             ceil_angle = 0
         floor_moments = self.df_forces[
             (self.df_forces["Angulo"] == floor_angle)
-            & (self.df_forces["Calado"] == self.draft)
+            & (self.df_forces["Calado"] == draft_local)
             & (self.df_forces["Rotacao"] == self.rotation)
         ]
 
         ceil_moments = self.df_forces[
             (self.df_forces["Angulo"] == ceil_angle)
-            & (self.df_forces["Calado"] == self.draft)
+            & (self.df_forces["Calado"] == draft_local)
             & (self.df_forces["Rotacao"] == self.rotation)
         ]
         if vel >= 6 and vel <= 10:
@@ -304,7 +307,6 @@ class ProcessMap:
         P_cons = m * self.rotation * np.pi / (30 * self.eta_rot)
 
         return P_cons
-
 
     def save_wind_speeds(self, i):
         if np.round(self.df.loc[i, 'LAT']) == np.round(self.lat) and np.round(
@@ -350,8 +352,8 @@ class ProcessMap:
 
     def calc_relative_velocity_and_angle(self, u10, v10, u_ship, v_ship):
 
-        u_rel = u10 - u_ship
-        v_rel = v10 - v_ship
+        u_rel = u_ship - u10
+        v_rel = v_ship - v10
         angle_rel = self.wind_rel(
             u_rel, v_rel
         )
@@ -414,10 +416,10 @@ class ProcessMap:
             angle_rel.append(angle_rel_i)
 
             vel_mag = np.sqrt(np.power(u_rel_i, 2) + np.power(v_rel_i, 2))
-            fx_total = self.get_forces(angle_rel_i, vel_mag, 'fx', 'cx')
-            fy_total = self.get_forces(angle_rel_i, vel_mag, 'fy', 'cy')
-            fx_rotores = self.get_forces(angle_rel_i, vel_mag, "fx_rotores", "cx_rotores")
-            fy_rotores = self.get_forces(angle_rel_i, vel_mag, "fy_rotores", "cy_rotores")
+            fx_total = self.get_forces(angle_rel_i, vel_mag, 'fx')
+            fy_total = self.get_forces(angle_rel_i, vel_mag, 'fy')
+            fx_rotores = self.get_forces(angle_rel_i, vel_mag, "fx_rotores")
+            fy_rotores = self.get_forces(angle_rel_i, vel_mag, "fy_rotores")
             p_cons.append(self.get_power_rotor(angle_rel_i, vel_mag)/1000)
 
             force_x.append(fx_total)
@@ -498,24 +500,41 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ship = 'abdias_suez' if args.ship == 'suez' else 'castro_alves_afra' 
 
-    current_time = pd.Timestamp(f'2021-{int(args.start_month)}-01 00:00:00')
+    current_time = pd.Timestamp(f'2020-{int(args.start_month)}-01 00:00:00')
     wind_csv = 'data.csv'
 
     forces_path = f"../{ship}/forces_CFD.csv"
 
-    for i in range(2200):
-        print('Time starts: ', current_time)
-
-        map_processer = ProcessMap(
-            timestamp=current_time,
-            route_path=f'../{ship}/ais/{wind_csv}',
-            wind_path=f'../{ship}/gribs_2020/2020_1.grib',
-            forces_path=forces_path,
-            ship=args.ship,
-            rotation=args.rotation
-        )
-        map_processer.load_data()
-
-        map_processer.process_per_route()
-        map_processer.save_csv(current_time)
-        current_time += pd.Timedelta(hours=1)
+    map_processer = ProcessMap(
+        timestamp=current_time,
+        route_path=f'../{ship}/ais/{wind_csv}',
+        wind_path=f'../{ship}/gribs_2020/2020_1.grib',
+        forces_path=forces_path,
+        ship=args.ship,
+        rotation=args.rotation
+    )
+    try:
+        for i in range(2200):
+            print('Time starts: ', current_time)
+            map_processer.timestamp = current_time
+            map_processer.load_data()
+            map_processer.process_per_route()
+            map_processer.save_csv(current_time)
+            # liberar memória intermediária explicitamente
+            try:
+                del map_processer.new_df
+                map_processer.new_df = None
+            except Exception:
+                pass
+            gc.collect()
+            current_time += pd.Timedelta(hours=1)
+    finally:
+        # garantir fechamento do dataset aberto
+        try:
+            if map_processer.ds is not None:
+                map_processer.ds.close()
+                map_processer.ds = None
+                ProcessMap._ds_path = None
+        except Exception:
+            pass
+        gc.collect()
