@@ -50,7 +50,7 @@ class GainIMO:
         self.angle_list = np.append(angle_list, 360)
 
         # 1. Define V_ref (ship velocity)
-        self.V_ship = 15 * 0.5144  # knots to m/s
+        self.V_ship = 12 * 0.5144  # knots to m/s
         self.eta_D = 0.7
         self.RT = 744 # kN
         self.draft = float(draft)  # meters
@@ -880,7 +880,7 @@ def main():
     imo_data_path = "../imo_guidance/global_prob_matrix.csv"
     forces_data_path = f"../{ship}/forces_CFD.csv"
     rotations = [100, 180]
-    drafts = [16]
+    drafts = [8.5, 16]
     force_matrix = []
     vk_matrix = []
     ang_matrix = [] 
@@ -904,12 +904,16 @@ def main():
     # get_gain.plot_wind_profiles()
     
     # Passar as matrizes de Vk e ângulo para o método de comparação
-    get_gain.compare_common_force(force_matrix, target_angles=[60], 
-                                 vk_mats=vk_matrix, ang_mats=ang_matrix)
-    get_gain.compare_common_force(force_matrix, target_angles=[90], 
-                                 vk_mats=vk_matrix, ang_mats=ang_matrix)
-    get_gain.compare_common_force(force_matrix, target_angles=[120], 
-                                 vk_mats=vk_matrix, ang_mats=ang_matrix)
+    # get_gain.compare_common_force(force_matrix, target_angles=[0], 
+    #                              vk_mats=vk_matrix, ang_mats=ang_matrix)
+    # get_gain.compare_common_force(force_matrix, target_angles=[30], 
+    #                              vk_mats=vk_matrix, ang_mats=ang_matrix)
+    # get_gain.compare_common_force(force_matrix, target_angles=[60], 
+    #                              vk_mats=vk_matrix, ang_mats=ang_matrix)
+    # get_gain.compare_common_force(force_matrix, target_angles=[90], 
+    #                              vk_mats=vk_matrix, ang_mats=ang_matrix)
+    # get_gain.compare_common_force(force_matrix, target_angles=[120], 
+    #                              vk_mats=vk_matrix, ang_mats=ang_matrix)
 
 if __name__ == "__main__":
     main()
