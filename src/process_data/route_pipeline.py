@@ -28,7 +28,7 @@ class ProcessMap:
         self.ds = None
         self.df_forces = None
         self.draft = None
-        self.Ax = 1130
+        self.Ax = 175
         self.Ay = 3300
         R_T = None
         self.eta_d = 0.7
@@ -73,7 +73,7 @@ class ProcessMap:
         if self.df_forces is None:
             try:
                 print("[INFO] Loading thrust data")
-                self.df_forces = pd.read_csv(self.forces_path, index_col=0)
+                self.df_forces = pd.read_csv(self.forces_path)
                 self.angle_list = self.df_forces["Angulo"].unique()
                 self.angle_list = np.append(self.angle_list, 360)
             except FileNotFoundError as e:
@@ -417,15 +417,15 @@ class ProcessMap:
 
             vel_mag = np.sqrt(np.power(u_rel_i, 2) + np.power(v_rel_i, 2))
             fx_total = self.get_forces(angle_rel_i, vel_mag, 'fx')
-            fy_total = self.get_forces(angle_rel_i, vel_mag, 'fy')
+            # fy_total = self.get_forces(angle_rel_i, vel_mag, 'fy')
             fx_rotores = self.get_forces(angle_rel_i, vel_mag, "fx_rotores")
-            fy_rotores = self.get_forces(angle_rel_i, vel_mag, "fy_rotores")
+            # fy_rotores = self.get_forces(angle_rel_i, vel_mag, "fy_rotores")
             p_cons.append(self.get_power_rotor(angle_rel_i, vel_mag)/1000)
 
             force_x.append(fx_total)
-            force_y.append(fy_total)
+            # force_y.append(fy_total)
             force_x_rotores.append(fx_rotores)
-            force_y_rotores.append(fy_rotores)
+            # force_y_rotores.append(fy_rotores)
             
             times.append(str(self.timestamp.strftime('%Y-%m-%d %X')))
             self.timestamp += pd.Timedelta(seconds=self.dt)
@@ -461,18 +461,17 @@ class ProcessMap:
         self.new_df['v_rel'] = v_rel
         self.new_df['angle_rel'] = angle_rel
         self.new_df['force_x_total'] = force_x
-        self.new_df['force_y_total'] = force_y
+        # self.new_df['force_y_total'] = force_y
         self.new_df['force_x_rotor'] = force_x_rotores
-        self.new_df['force_y_rotor'] = force_y_rotores
+        # self.new_df['force_y_rotor'] = force_y_rotores
         self.new_df['force_x_casco_sup'] = force_x_casco_sup
-        self.new_df['force_y_casco_sup'] = force_y_casco_sup
+        # self.new_df['force_y_casco_sup'] = force_y_casco_sup
         self.new_df['p_cons'] = p_cons
         self.new_df['p_prop'] = p_prop
         self.new_df['p_e_rotor'] = P_E_
         self.new_df['gain'] = gain
 
         return self.new_df
-
 
     def process_per_route(self):
         csv_path = f'../{self.folder}/route_csvs{self.rotation}/wind_data_year_{int(self.timestamp.year)}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv'
@@ -500,10 +499,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
     ship = 'abdias_suez' if args.ship == 'suez' else 'castro_alves_afra' 
 
-    current_time = pd.Timestamp(f'2020-{int(args.start_month)}-01 00:00:00')
+    current_time = pd.Timestamp(f'2020-{int(args.start_month)}-01 14:00:00')
     wind_csv = 'data.csv'
 
-    forces_path = f"../{ship}/forces_CFD.csv"
+    forces_path = f"../{ship}/forces_CFD_v2.csv"
 
     map_processer = ProcessMap(
         timestamp=current_time,

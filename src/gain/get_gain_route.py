@@ -24,7 +24,7 @@ def process_single_trip(trip_file):
         timestamp = pd.NaT  # Not a Time
     
     return {
-        'gain': df_trip['Gain'].mean(),
+        'gain': df_trip['gain'].mean(),
         'timestamp': timestamp
     }
 def plot_gains_per_year(df_gain, outputfolder):
@@ -212,7 +212,6 @@ def plot_histogram(trip100, trip180, outputfolder):
 
 def calc_mean_gain_parallel(csv_files, n_jobs=-1):
     print(f"[INFO] Calculating gain from {len(csv_files)} routes using {n_jobs} cores")
-    
     # Parallel processing with progress bar
     results = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(process_single_trip)(trip) 
@@ -463,10 +462,10 @@ def main():
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
-    routes_csv_path_100 = f"../{ship}/routes_csv_rot100"
+    routes_csv_path_100 = f"../{ship}/route_csvs100"
     csv_files_100 = glob.glob(os.path.join(routes_csv_path_100, "*.csv"))
 
-    routes_csv_path_180 = f"../{ship}/routes_csv_rot180"
+    routes_csv_path_180 = f"../{ship}/route_csvs180"
     csv_files_180 = glob.glob(os.path.join(routes_csv_path_180, "*.csv"))
     
     if args.separated:
@@ -488,14 +487,15 @@ def main():
         
     else:
         # Original combined processing
-        if not os.path.exists(f"../{ship}/total_gains.csv"):
-            gain_per_trip100 = calc_mean_gain_parallel(csv_files_100)
-            gain_per_trip180 = calc_mean_gain_parallel(csv_files_180)
-            save_gains_to_csv(gain_per_trip100, gain_per_trip180, f"../{ship}/total_gains.csv")
-        else: 
-            df_gains = pd.read_csv(f"../{ship}/total_gains.csv")
-            gain_per_trip100 = df_gains['gain_100']
-            gain_per_trip180 = df_gains['gain_180']
+        # if not os.path.exists(f"../{ship}/total_gains.csv"):
+        # gain_per_trip100 = calc_mean_gain_parallel(csv_files_100)
+        gain_per_trip180 = calc_mean_gain_parallel(csv_files_180)
+        # save_gains_to_csv(gain_per_trip100, gain_per_trip180, f"../{ship}/total_gains.csv")
+        # else: 
+        import pdb;pdb.set_trace()
+        df_gains = pd.read_csv(f"../{ship}/total_gains.csv")
+        gain_per_trip100 = df_gains['gain_100']
+        gain_per_trip180 = df_gains['gain_180']
         
         if args.total_gain: 
             final_gain = total_gain(gain_per_trip100)
