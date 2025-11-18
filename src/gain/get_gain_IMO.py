@@ -655,7 +655,7 @@ def main():
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
     imo_data_path = "../imo_guidance/global_prob_matrix.csv"
-    forces_data_path = f"../{ship}/forces_CFD.csv"
+    forces_data_path = f"../{ship}/forces_CFD_v2.csv"
     rotations = [100, 180]
     drafts = [8.5, 16]
     force_matrix = []

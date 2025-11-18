@@ -1,31 +1,13 @@
 import pandas as pd
 import numpy as np
 import os
-from tqdm import tqdm
-import argparse
-import bisect
 import folium
-import matplotlib.pyplot as plt
-import concurrent.futures
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 
 
 class GetThrust:
     def __init__(
         self,
-        outbound_csv_path: str,
-        return_csv_path: str,
-        forces_path: str,
-        rotation: int,
-        ship: str,
-        no_rotor: bool,
-        unwanted_angles: bool
     ):
-        self.outbound_csv_path = outbound_csv_path
-        self.return_csv_path = return_csv_path
-        self.forces_path = forces_path
-        self.rotation = rotation
-        self.ship = ship
         self.v_s = 12  # knots
         self.R_T = 744
         self.P_E = 4592
@@ -44,53 +26,6 @@ class GetThrust:
         self.force_x = None
         self.force_y = None
         self.new_df = None
-        self.no_rotor = no_rotor
-        self.unwanted_angles = unwanted_angles
-
-    def load_data(self):
-
-        print(f"[INFO] Loading route for time: {self.timestamp}")
-        print(self.current_month, self.timestamp.month)
-        if self.current_month != self.timestamp.month:
-            print(
-                f"[INFO] Changing month from {self.current_month} to {self.timestamp.month}"
-            )
-
-        print("[INFO] Loading outbound route data")
-        try:
-            self.df_outbound = pd.read_csv(
-                os.path.join(
-                    self.outbound_csv_path,
-                    f"wind_data_year_{self.timestamp.year}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv",
-                ),
-                sep=",",
-            )
-        except FileNotFoundError as e:
-            print(f"[ERROR] {e}")
-            print("[WARNING] Continuing without return data")
-        except pd.errors.EmptyDataError:
-            print(f"[ERROR] Data file is empty")
-        except Exception as e:
-            print(f"[ERROR] Unexpected error loading return data: {e}")
-        return_time = pd.Timestamp(self.df_outbound["time"].iloc[-1]) + pd.Timedelta(
-            hours=1
-        )
-        print("[INFO] Loading return route data")
-        try:
-            self.df_return = pd.read_csv(
-                os.path.join(
-                    self.return_csv_path,
-                    f"wind_data_year_{return_time.year}_month_{return_time.month}_day_{return_time.day}_hour_{return_time.hour}.csv",
-                ),
-                sep=",",
-            )
-        except FileNotFoundError as e:
-            print(f"[ERROR] {e}")
-            print("[WARNING] Continuing without return data")
-        except pd.errors.EmptyDataError:
-            print(f"[ERROR] Data file is empty")
-        except Exception as e:
-            print(f"[ERROR] Unexpected error loading return data: {e}")
 
     def load_forces(self):
         if not self.df_forces:
@@ -123,17 +58,14 @@ class GetThrust:
         lat = df["LAT"][:]
         lon = df["LON"][:]
         times = df["time"][:]
-        Vw = df["Vw"][:]
         angle = df["angle_rel"][:]
-        Fx = df["Fx"][:]
-        Fy = df["Fy"][:]
-        Fx_rotores = df["Fx_rotores"][:]
-        Fy_rotores = df["Fy_rotores"][:]
-        Fx_casco_sup = df["Fx_casco_sup"][:]
-        Fy_casco_sup = df["Fy_casco_sup"][:]
-        P_cons = df["P_cons"]
-        P_E_ = df["P_E_"]
-        gain = df["Gain"]
+        Fx = df["force_x_total"][:]
+        Vw = (df["u_rel"] ** 2 + df["v_rel"] * 2) ** 0.5
+        Fx_rotores = df["force_x_rotor"][:]
+        Fx_casco_sup = df["force_x_casco_sup"][:]
+        P_cons = df["p_cons"]
+        P_E_ = df["p_e_rotor"]
+        gain = df["gain"]
 
         # Create a map centered around the first coordinate
         self.m = folium.Map(location=[lat.iloc[0], lon.iloc[0]], zoom_start=12)
@@ -156,9 +88,6 @@ class GetThrust:
         </style>
         """
         self.m.get_root().html.add_child(folium.Element(tooltip_css))
-
-        # Color coding based on Fx values
-        fx_min, fx_max = Fx.min(), Fx.max()
 
         def get_color(fx_value):
             """Return color based on Fx value"""
@@ -208,18 +137,6 @@ class GetThrust:
                     </tr>
                     <tr>
                     <tr style="background-color: #f8f9fa;">
-                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx Total</td>
-                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fy.iloc[i])}; font-weight: bold;">{Fy.iloc[i]:.2f} kN</td>
-                    </tr>
-                    <tr>
-                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx Rotor</td>
-                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fy_rotores.iloc[i])}; font-weight: bold;">{Fy_rotores.iloc[i]:.2f} kN</td>
-                    </tr>
-                        <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Fx casco/sup</td>
-                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; color: {get_color(Fy_casco_sup.iloc[i])}; font-weight: bold;">{Fy_casco_sup.iloc[i]:.2f} kN</td>
-                    </tr>
-                    <tr>
-                    <tr style="background-color: #f8f9fa;">
                         <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">P_cons</td>
                         <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6; font-weight: bold;">{int(P_cons.iloc[i])} kW</td>
                     </tr>
@@ -245,7 +162,6 @@ class GetThrust:
                 <span style="color: #666;">Lat: {lat:.3f}° | Lon: {lon:.3f}°</span><br>
                 <span style="color: #2E86AB;">Relative Wind: {Vw.iloc[i]:.1f} m/s | Angle: {int(angle.iloc[i])}°</span><br>
                 <span style="color: {get_color(Fx.iloc[i])}; font-weight: bold;">Fx: {Fx.iloc[i]:.1f} kN</span> | 
-                <span style="color: {get_color(Fy.iloc[i])}; font-weight: bold;">Fy: {Fy.iloc[i]:.1f} kN</span>
             </div>
             """
 
@@ -318,16 +234,11 @@ class GetThrust:
             self.m.get_root().html.add_child(folium.Element(html))
 
         calado = 16 if option == "outbound" else 8.5
-        if self.no_rotor:
-            out_path = (
-                f"../{self.ship}/maps_{self.rotation}_no_rotor/{option}/calado_{calado}_rot_{self.rotation}/"
-            )
-        if not self.no_rotor:
-            out_path = (
-                f"../{self.ship}/maps_{self.rotation}/{option}/calado_{calado}_rot_{self.rotation}/"
-            )
-        
-        filename = f"year_{self.timestamp.year}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.html"
+        out_path = f"../abdias_suez/maps_100/{option}/calado_{calado}_rot_100/"
+
+        # filename = f"year_{self.timestamp.year}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.html"
+        filename = f"map.html"
+
         if not os.path.exists(out_path):
             os.makedirs(out_path, exist_ok=True)
 
@@ -337,5 +248,24 @@ class GetThrust:
                 filename,
             )
         )
-        
+
         print(f"[INFO] Map saved to {out_path}{filename}")
+
+
+def main():
+
+    df = pd.read_csv(
+        r"C:\Users\jung_\OneDrive\Documentos\Poli\TPN\CENPES Descarbonização\abdias_suez\route_csvs100\wind_data_year_2020_month_1_day_1_hour_14.csv",
+        index_col=0,
+    )
+    outbound_df = df.iloc[: int(len(df) / 2)]
+    return_df = df.iloc[int(len(df) / 2) :]
+    ship = "suez"
+    map_generator = GetThrust()
+    map_generator.create_map(outbound_df, "outbound")
+
+    return
+
+
+if __name__ == "__main__":
+    main()

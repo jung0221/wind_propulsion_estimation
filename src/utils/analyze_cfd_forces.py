@@ -3,11 +3,23 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-Ax = 175*4
-Ay = 175*4
+Ax = 175 * 4
+Ay = 175 * 4
 lpp = 264
 
-def polar_plot(x_axis, y_axis, z_axis, forces, calado, rotacao, title, rmin=None, rmax=None, coef=True):
+
+def polar_plot(
+    x_axis,
+    y_axis,
+    z_axis,
+    forces,
+    calado,
+    rotacao,
+    title,
+    rmin=None,
+    rmax=None,
+    coef=True,
+):
     plt.style.use("seaborn-v0_8-muted")
 
     fig, ax = plt.subplots(subplot_kw=dict(projection="polar"), figsize=(10, 8))
@@ -22,9 +34,9 @@ def polar_plot(x_axis, y_axis, z_axis, forces, calado, rotacao, title, rmin=None
 
         if coef:
             if forces in ("mz", "Mz_rotor"):
-                denom = 0.5 * 1.2 * (V ** 2) * lpp * Ay
+                denom = 0.5 * 1.2 * (V**2) * lpp * Ay
             else:
-                denom = 0.5 * 1.2 * (V ** 2) * Ax / 1000.0
+                denom = 0.5 * 1.2 * (V**2) * Ax / 1000.0
             z_plot = (forces_x / denom).tolist()
         else:
             z_plot = forces_x.tolist()
@@ -41,8 +53,11 @@ def polar_plot(x_axis, y_axis, z_axis, forces, calado, rotacao, title, rmin=None
                 vals_ord = np.array(z_plot)[order]
                 degs = np.rad2deg(theta)
                 # interpolar com periodo 360
-                z_plot = np.interp(degs, np.concatenate([angs_ord - 360, angs_ord, angs_ord + 360]),
-                                   np.tile(vals_ord, 3)).tolist()
+                z_plot = np.interp(
+                    degs,
+                    np.concatenate([angs_ord - 360, angs_ord, angs_ord + 360]),
+                    np.tile(vals_ord, 3),
+                ).tolist()
             else:
                 # fallback: repetir o primeiro valor
                 z_plot = [z_plot[0]] * len(theta)
@@ -70,17 +85,24 @@ def polar_plot(x_axis, y_axis, z_axis, forces, calado, rotacao, title, rmin=None
     # ax.set_title(title, va="bottom", fontsize=16, pad=18)
 
     # legenda externa com fundo semi-transparente
-    leg = ax.legend(loc="upper right", bbox_to_anchor=(1.25, 1.05), framealpha=0.85, fontsize=10)
+    leg = ax.legend(
+        loc="upper right", bbox_to_anchor=(1.25, 1.05), framealpha=0.85, fontsize=10
+    )
     leg.get_frame().set_linewidth(0.4)
 
     os.makedirs("figures", exist_ok=True)
-    fname = f"figures/coef_{forces}_calado_{calado}_rotacao_{rotacao}_V1.png" if coef else f"figures/{forces}_calado_{calado}_rotacao_{rotacao}_V1.png"
+    fname = (
+        f"figures/coef_{forces}_calado_{calado}_rotacao_{rotacao}_V1.png"
+        if coef
+        else f"figures/{forces}_calado_{calado}_rotacao_{rotacao}_V1.png"
+    )
     fig.savefig(fname, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
 
-
-def forces_polar_plot(x_axis, y_axis, z_axis, forces, calado, rotacao, title, rmin=None, rmax=None):
+def forces_polar_plot(
+    x_axis, y_axis, z_axis, forces, calado, rotacao, title, rmin=None, rmax=None
+):
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(111, polar=True)
     theta = np.deg2rad(x_axis)
@@ -105,47 +127,111 @@ def forces_polar_plot(x_axis, y_axis, z_axis, forces, calado, rotacao, title, rm
     ax.legend(loc="center right", bbox_to_anchor=(1.2, 0.1))
     fig.savefig(f"figures/{forces}_calado_{calado}.png")
 
-    
+
 forces_data_path = f"../abdias_suez/forces_CFD.csv"
 thrust_df = pd.read_csv(forces_data_path)
-case_1 = thrust_df[
-    (thrust_df["Calado"] == 8.5) &
-    (thrust_df["Rotacao"] == 100)
-]
-case_2 = thrust_df[
-    (thrust_df["Calado"] == 16.0) &
-    (thrust_df["Rotacao"] == 100)
-]
-case_3 = thrust_df[
-    (thrust_df["Calado"] == 8.5) &
-    (thrust_df["Rotacao"] == 180)
-]
-case_4 = thrust_df[
-    (thrust_df["Calado"] == 16.0) &
-    (thrust_df["Rotacao"] == 180)
-]
+case_1 = thrust_df[(thrust_df["Calado"] == 8.5) & (thrust_df["Rotacao"] == 100)]
+case_2 = thrust_df[(thrust_df["Calado"] == 16.0) & (thrust_df["Rotacao"] == 100)]
+case_3 = thrust_df[(thrust_df["Calado"] == 8.5) & (thrust_df["Rotacao"] == 180)]
+case_4 = thrust_df[(thrust_df["Calado"] == 16.0) & (thrust_df["Rotacao"] == 180)]
 x_axis = np.arange(0, 390, 30)
 y_axis = [6, 10, 12]
 
 
-case_forces_1 = thrust_df[
-    (thrust_df["Calado"] == 8.5)
-]
-case_forces_2 = thrust_df[
-    (thrust_df["Calado"] == 16.0)
-]
+case_forces_1 = thrust_df[(thrust_df["Calado"] == 8.5)]
+case_forces_2 = thrust_df[(thrust_df["Calado"] == 16.0)]
 
 # forces_polar_plot(x_axis, y_axis, case_forces_1, 'fx_rotores', 8.5, [100,180], f"$F_x$ (rotores) para calado {8.5}m e rotação {100}RPM")
 # forces_polar_plot(x_axis, y_axis, case_forces_2, 'fx_rotores', 16, [100,180],  f"$F_x$ (rotores) para calado {16}m e rotação {100}RPM")
 
-polar_plot(x_axis, y_axis, case_1, 'fx_rotores', 8.5, 100, f"C_x (rotores) para T = {8.5}m e omega = 100 RPM", 0, 9)
-polar_plot(x_axis, y_axis, case_2, 'fx_rotores', 16, 100,  f"C_x (rotores) para T = {16}m  e omega = 100 RPM", 0, 9)
-polar_plot(x_axis, y_axis, case_3, 'fx_rotores', 8.5, 180, f"C_x (rotores) para T = {8.5}m e omega = 180 RPM", 0, 9)
-polar_plot(x_axis, y_axis, case_4, 'fx_rotores', 16, 180,  f"C_x (rotores) para T = {16}m  e omega = 180 RPM", 0, 9)
-polar_plot(x_axis, y_axis, case_1, 'fy_rotores', 8.5, 100, f"C_y (rotores) para T = {8.5}m e omega = 100 RPM", 0, 9)
-polar_plot(x_axis, y_axis, case_2, 'fy_rotores', 16, 100,  f"C_y (rotores) para T = {16}m  e omega = 100 RPM", 0, 9)
-polar_plot(x_axis, y_axis, case_3, 'fy_rotores', 8.5, 180, f"C_y (rotores) para T = {8.5}m e omega = 180 RPM", 0, 9)
-polar_plot(x_axis, y_axis, case_4, 'fy_rotores', 16, 180,  f"C_y (rotores) para T = {16}m  e omega = 180 RPM", 0, 9)
+polar_plot(
+    x_axis,
+    y_axis,
+    case_1,
+    "fx_rotores",
+    8.5,
+    100,
+    f"C_x (rotores) para T = {8.5}m e omega = 100 RPM",
+    0,
+    9,
+)
+polar_plot(
+    x_axis,
+    y_axis,
+    case_2,
+    "fx_rotores",
+    16,
+    100,
+    f"C_x (rotores) para T = {16}m  e omega = 100 RPM",
+    0,
+    9,
+)
+polar_plot(
+    x_axis,
+    y_axis,
+    case_3,
+    "fx_rotores",
+    8.5,
+    180,
+    f"C_x (rotores) para T = {8.5}m e omega = 180 RPM",
+    0,
+    9,
+)
+polar_plot(
+    x_axis,
+    y_axis,
+    case_4,
+    "fx_rotores",
+    16,
+    180,
+    f"C_x (rotores) para T = {16}m  e omega = 180 RPM",
+    0,
+    9,
+)
+polar_plot(
+    x_axis,
+    y_axis,
+    case_1,
+    "fy_rotores",
+    8.5,
+    100,
+    f"C_y (rotores) para T = {8.5}m e omega = 100 RPM",
+    0,
+    9,
+)
+polar_plot(
+    x_axis,
+    y_axis,
+    case_2,
+    "fy_rotores",
+    16,
+    100,
+    f"C_y (rotores) para T = {16}m  e omega = 100 RPM",
+    0,
+    9,
+)
+polar_plot(
+    x_axis,
+    y_axis,
+    case_3,
+    "fy_rotores",
+    8.5,
+    180,
+    f"C_y (rotores) para T = {8.5}m e omega = 180 RPM",
+    0,
+    9,
+)
+polar_plot(
+    x_axis,
+    y_axis,
+    case_4,
+    "fy_rotores",
+    16,
+    180,
+    f"C_y (rotores) para T = {16}m  e omega = 180 RPM",
+    0,
+    9,
+)
 # polar_plot(x_axis, y_axis, case_1, 'Mz_rotor', 8.5, 100,   f"C_Z (rotores) para T = {8.5}m e omega = 100 RPM")
 # polar_plot(x_axis, y_axis, case_2, 'Mz_rotor', 16, 100,    f"C_Z (rotores) para T = {16}m  e omega = 100 RPM")
 # polar_plot(x_axis, y_axis, case_3, 'Mz_rotor', 8.5, 180,   f"C_Z (rotores) para T = {8.5}m e omega = 180 RPM")
@@ -161,6 +247,6 @@ polar_plot(x_axis, y_axis, case_4, 'fy_rotores', 16, 180,  f"C_y (rotores) para 
 # polar_plot(x_axis, y_axis, case_3, 'fy', 8.5, 180, f"$C_y$ (total) para calado {8.5}m e rotação {180}RPM", -10, 10)
 # polar_plot(x_axis, y_axis, case_4, 'fy', 16, 180,  f"$C_y$ (total) para calado {16}m e rotação {180}RPM" , -10, 10)
 # polar_plot(x_axis, y_axis, case_1, 'mz', 8.5, 100, f"$M_Z$ (total) para calado {8.5}m e rotação {100}RPM")
-# polar_plot(x_axis, y_axis, case_2, 'mz', 16, 100,  f"$M_Z$ (total) para calado {16}m e rotação {100}RPM" )  
+# polar_plot(x_axis, y_axis, case_2, 'mz', 16, 100,  f"$M_Z$ (total) para calado {16}m e rotação {100}RPM" )
 # polar_plot(x_axis, y_axis, case_3, 'mz', 8.5, 180, f"$M_Z$ (total) para calado {8.5}m e rotação {180}RPM")
 # polar_plot(x_axis, y_axis, case_4, 'mz', 16, 180,  f"$M_Z$ (total) para calado {16}m e rotação {180}RPM" )
