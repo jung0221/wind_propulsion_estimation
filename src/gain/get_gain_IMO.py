@@ -65,6 +65,8 @@ class GainIMO:
         self.eta_D = 0.7
         self.RT = 744  # kN
         self.draft = float(draft)  # meters
+        if self.draft < 10:
+            self.RT = 696
         self.rotation = int(rotation)  # RPM
         self.Ax = 175
         self.Ay = 175
@@ -643,7 +645,7 @@ class GainIMO:
 
 def main():
     parser = argparse.ArgumentParser(description="Wind Route Creator")
-    parser.add_argument("--ship", required=True, help="afra or suez")
+    parser.add_argument("-s", "--ship", required=True, help="afra or suez")
     parser.add_argument("--plot", action="store_true", help="Plot graphics")
     parser.add_argument(
         "--modified-matrix",

@@ -12,7 +12,17 @@ import bisect
 class ProcessMap:
     _ds_path = None
 
-    def __init__(self, timestamp, route_path, wind_path, forces_path, ship, rotation):
+    def __init__(
+        self,
+        timestamp,
+        route_path,
+        wind_path,
+        forces_path,
+        ship,
+        rotation,
+        calculate_forces=True,
+    ):
+        self.calculate_forces = calculate_forces
         self.timestamp = timestamp
         self.route_path = route_path
         self.wind_path = wind_path
@@ -28,6 +38,8 @@ class ProcessMap:
         self.new_df = None
         self.df = None
         self.current_month = None
+        self.RT = None
+
         self.ds = None
         self.df_forces = None
         self.draft = None
@@ -148,9 +160,7 @@ class ProcessMap:
 
         dist = self.haversine(lat1, lon1, lat2, lon2)
         ang_navio = self.bearing(lat1, lon1, lat2, lon2)
-
         self.dt = dist / self.vs_ms
-
         if self.current_month != self.timestamp.month:
             self.current_month = self.timestamp.month
             month_wind_path = f"{os.path.dirname(self.wind_path)}/{int(self.timestamp.year)}_{int(self.current_month)}.grib"  # Adjust path format as needed
@@ -170,7 +180,6 @@ class ProcessMap:
         except:
             print("[ERROR] v10 not avilable")
             v10 = 0
-
         u10 = self.extrapolate_v_wind(u10, z_height)
         v10 = self.extrapolate_v_wind(v10, z_height)
         wind_angle = self.wind_dri(u10, v10)
@@ -376,13 +385,12 @@ class ProcessMap:
         angle_rel = []
         times = []
         force_x = []
-        force_y = []
         force_x_rotores = []
-        force_y_rotores = []
         p_cons = []
         pbar = tqdm(total_range, desc="Ida: Calado Carregado")
         z_height = 27.7
         self.draft = 16
+        self.RT = 744
         R_T = np.zeros(total_range.shape[0])
         P_E = np.zeros(total_range.shape[0])
 
@@ -399,6 +407,7 @@ class ProcessMap:
             if i == int(total_range[-1] / 2):
                 z_height = 35.5
                 self.draft = 8.5
+                self.RT = 696
                 cond = "lastro"
             res = self.get_wind_properties(i, z_height)
 
@@ -422,19 +431,21 @@ class ProcessMap:
             angle_rel.append(angle_rel_i)
 
             vel_mag = np.sqrt(np.power(u_rel_i, 2) + np.power(v_rel_i, 2))
-            fx_total = self.get_forces(angle_rel_i, vel_mag, "fx")
-            # fy_total = self.get_forces(angle_rel_i, vel_mag, 'fy')
-            fx_rotores = self.get_forces(angle_rel_i, vel_mag, "fx_rotores")
-            # fy_rotores = self.get_forces(angle_rel_i, vel_mag, "fy_rotores")
-            p_cons.append(self.get_power_rotor(angle_rel_i, vel_mag) / 1000)
 
-            force_x.append(fx_total)
-            # force_y.append(fy_total)
-            force_x_rotores.append(fx_rotores)
-            # force_y_rotores.append(fy_rotores)
-
+            if vel_mag > 20:
+                vel_mag = 20
             times.append(str(self.timestamp.strftime("%Y-%m-%d %X")))
             self.timestamp += pd.Timedelta(seconds=self.dt)
+
+            if self.calculate_forces:
+                fx_total = self.get_forces(angle_rel_i, vel_mag, "fx")
+                fx_rotores = self.get_forces(angle_rel_i, vel_mag, "fx_rotores")
+                if fx_rotores > self.RT:
+                    fx_rotores = self.RT
+                p_cons.append(self.get_power_rotor(angle_rel_i, vel_mag) / 1000)
+
+                force_x.append(fx_total)
+                force_x_rotores.append(fx_rotores)
 
         u10 = np.array(u10)
         v10 = np.array(v10)
@@ -444,18 +455,22 @@ class ProcessMap:
         v_rel = np.array(v_rel)
         angle_rel = np.array(angle_rel)
         times = np.array(times)
-
-        force_x = np.array(force_x)
-        force_y = np.array(force_y)
-        force_x_rotores = np.array(force_x_rotores)
-        force_y_rotores = np.array(force_y_rotores)
-        p_cons = np.array(p_cons)
-        force_x_casco_sup = force_x - force_x_rotores
-        force_y_casco_sup = force_y - force_y_rotores
-        p_prop = (R_T - force_x) * self.vs_ms
-
-        P_E_ = p_cons + p_prop
-        gain = 1 - P_E_ / P_E
+        if self.calculate_forces:
+            force_x = np.array(force_x)
+            force_x_rotores = np.array(force_x_rotores)
+            p_cons = np.array(p_cons)
+            force_x_casco_sup = force_x - force_x_rotores
+            p_prop = (R_T - force_x) * self.vs_ms
+            P_E_ = p_cons + p_prop
+            gain = 1 - P_E_ / P_E
+        else:
+            force_x = np.zeros(u10.shape)
+            force_x_rotores = np.zeros(u10.shape)
+            p_cons = np.zeros(u10.shape)
+            force_x_casco_sup = np.zeros(u10.shape)
+            p_prop = np.zeros(u10.shape)
+            P_E_ = np.zeros(u10.shape)
+            gain = np.zeros(u10.shape)
 
         self.new_df = self.df.loc[total_range, ["LAT", "LON"]].copy()
         self.new_df["time"] = times
@@ -467,28 +482,24 @@ class ProcessMap:
         self.new_df["v_rel"] = v_rel
         self.new_df["angle_rel"] = angle_rel
         self.new_df["force_x_total"] = force_x
-        # self.new_df['force_y_total'] = force_y
         self.new_df["force_x_rotor"] = force_x_rotores
-        # self.new_df['force_y_rotor'] = force_y_rotores
         self.new_df["force_x_casco_sup"] = force_x_casco_sup
-        # self.new_df['force_y_casco_sup'] = force_y_casco_sup
         self.new_df["p_cons"] = p_cons
         self.new_df["p_prop"] = p_prop
         self.new_df["p_e_rotor"] = P_E_
         self.new_df["gain"] = gain
-
         return self.new_df
 
     def process_per_route(self):
-        csv_path = f"D:/route_csvs{self.rotation}/wind_data_year_{int(self.timestamp.year)}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv"
+        csv_path = f"D:/{ship}/route_csvs{self.rotation}/wind_data_year_{int(self.timestamp.year)}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv"
 
         if os.path.exists(csv_path):
             self.new_df = pd.read_csv(csv_path, sep=",")
         else:
             self.process_dataframe()
 
-    def save_csv(self, timestamp):
-        csv_path = f"D:/route_csvs{self.rotation}/wind_data_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.csv"
+    def save_csv(self, timestamp, ship):
+        csv_path = f"D:/{ship}/route_csvs{self.rotation}/wind_data_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.csv"
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
         if not os.path.exists(csv_path):
             print(f"[INFO] Saving informations with start time: {timestamp} ..")
@@ -498,14 +509,19 @@ class ProcessMap:
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Wind Route Creator")
-    parser.add_argument("--ship", help="afra or suez")
+    parser.add_argument("-s", "--ship", help="afra or suez")
     parser.add_argument("--rotation", required=True, help="100 or 180")
     parser.add_argument("--start-month", required=True, help="Start month")
-
+    parser.add_argument(
+        "--no-forces", action="store_true", help="Do not calculate forces"
+    )
     args = parser.parse_args()
-    ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
-    current_time = pd.Timestamp(f"2021-{int(args.start_month)}-01 00:00:00")
+    calculate_forces = False if args.no_forces else True
+
+    ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
+    year = 2020
+    current_time = pd.Timestamp(f"{year}-{int(args.start_month)}-01 00:00:00")
     wind_csv = "data.csv"
 
     forces_path = f"../{ship}/forces_CFD_v2.csv"
@@ -513,19 +529,19 @@ if __name__ == "__main__":
     map_processer = ProcessMap(
         timestamp=current_time,
         route_path=f"../{ship}/ais/{wind_csv}",
-        wind_path=f"../{ship}/gribs_2020/2021_1.grib",
+        wind_path=f"../{ship}/gribs_2020/{year}_1.grib",
         forces_path=forces_path,
         ship=args.ship,
         rotation=args.rotation,
+        calculate_forces=calculate_forces,
     )
     try:
-        for i in range(2200):
+        for i in range(744):
             print("Time starts: ", current_time)
             map_processer.timestamp = current_time
             map_processer.load_data()
             map_processer.process_per_route()
-            map_processer.save_csv(current_time)
-            # liberar memória intermediária explicitamente
+            map_processer.save_csv(current_time, ship)
             try:
                 del map_processer.new_df
                 map_processer.new_df = None
