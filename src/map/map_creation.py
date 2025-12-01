@@ -11,6 +11,8 @@ from joblib import Parallel, delayed
 import re
 from tqdm import tqdm
 import argparse
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+import random
 
 
 class MapPerRoute:
@@ -269,147 +271,6 @@ class GlobalMap:
         """
         self.m = None
 
-    def _make_windrose_datauri(self, u_arr, v_arr, title=""):
-        """Create a windrose PNG from arrays of u10 and v10 and return a data URI."""
-        # Build temporary dataframe expected by get_windrose_from_route
-        tmp = pd.DataFrame({"u10": u_arr, "v10": v_arr})
-        # Create figure
-        fig = plt.figure(figsize=(6, 6), dpi=150)
-        ax = WindroseAxes.from_ax(fig=fig)
-        try:
-            get_windrose_from_route(tmp, output_name=title, ax=ax)
-        except Exception:
-            # fallback: plot simple windrose directly
-            wind_speed = np.sqrt(np.array(u_arr) ** 2 + np.array(v_arr) ** 2)
-            wind_dir = np.degrees(np.arctan2(-np.array(u_arr), -np.array(v_arr))) % 360
-            ax.bar(wind_dir, wind_speed, normed=True, opening=0.8, edgecolor="white")
-            ax.set_title(title)
-
-        buf = io.BytesIO()
-        # WindroseAxes are not always compatible with plt.tight_layout();
-        # use a conservative subplots_adjust to avoid the UserWarning while
-        # keeping reasonable margins.
-        try:
-            fig.subplots_adjust(left=0.06, right=0.98, top=0.94, bottom=0.06)
-        except Exception:
-            pass
-        fig.savefig(buf, format="png", bbox_inches="tight")
-        plt.close(fig)
-        buf.seek(0)
-        img_b64 = base64.b64encode(buf.read()).decode()
-        return f"data:image/png;base64,{img_b64}"
-
-    def _save_windrose_png(
-        self,
-        u_arr,
-        v_arr,
-        out_path,
-        title="",
-        hide_cardinal_labels=False,
-        invert_orientation=False,
-    ):
-        """Save a windrose PNG for given u/v arrays to out_path. Returns True if saved.
-
-        Supports passing precomputed `bins` by using the global `bins` variable
-        injected by the caller (see create_global_map) via closure, or by
-        inspecting provided arrays. To keep windroses comparable, callers
-        should compute `bins` (common edges) and set `global_bins` in the
-        surrounding scope before invoking this method.
-        """
-        try:
-            import matplotlib
-
-            matplotlib.use("Agg")
-            from windrose import WindroseAxes
-            import matplotlib.pyplot as plt
-
-            u = np.asarray(u_arr, dtype=float)
-            v = np.asarray(v_arr, dtype=float)
-            # filter invalid values
-            mask = np.isfinite(u) & np.isfinite(v)
-            u = u[mask]
-            v = v[mask]
-            if len(u) == 0:
-                return False
-
-            fig = plt.figure(figsize=(4, 4), dpi=150)
-            ax = WindroseAxes.from_ax(fig=fig)
-            wind_speed = np.sqrt(u**2 + v**2)
-            if invert_orientation:
-                wind_dir = np.degrees(np.arctan2(-u, -v)) % 360
-            else:
-                wind_dir = np.degrees(np.arctan2(u, v)) % 360
-            # Try to reuse a caller-provided `bins` (common across all windroses)
-            bins = None
-            try:
-                bins = globals().get("_GLOBAL_WINDROSE_BINS", None)
-            except Exception:
-                bins = None
-
-            if bins is not None:
-                ax.bar(
-                    wind_dir,
-                    wind_speed,
-                    bins=bins,
-                    normed=True,
-                    opening=0.8,
-                    edgecolor="white",
-                )
-            else:
-                ax.bar(
-                    wind_dir, wind_speed, normed=True, opening=0.8, edgecolor="white"
-                )
-            # optionally hide the cardinal direction labels (N, N-E, E, ...)
-            if hide_cardinal_labels:
-                try:
-                    import matplotlib.pyplot as _plt
-
-                    _plt.setp(ax.get_xticklabels(), visible=False)
-                except Exception:
-                    try:
-                        ax.set_xticklabels([])
-                    except Exception:
-                        pass
-            # ensure the speed/legend is shown on saved windrose images
-            try:
-                ax.set_legend(fontsize=9, title_fontsize=10)
-            except Exception:
-                try:
-                    ax.legend(fontsize=9)
-                except Exception:
-                    pass
-            # make radial tick labels (speed percentages or values) readable
-            try:
-                import matplotlib.pyplot as _plt2
-
-                _plt2.setp(ax.get_yticklabels(), fontsize=10)
-            except Exception:
-                pass
-            ax.set_title(title, fontsize=10)
-            try:
-                fig.subplots_adjust(left=0.06, right=0.98, top=0.94, bottom=0.06)
-            except Exception:
-                pass
-            # ensure parent dir exists before saving
-            try:
-                parent = os.path.dirname(out_path)
-                if parent:
-                    os.makedirs(parent, exist_ok=True)
-            except Exception:
-                pass
-
-            fig.savefig(out_path, bbox_inches="tight")
-            plt.close(fig)
-            return True
-        except Exception:
-            import traceback
-
-            print(
-                "[WARNING] Exception while creating windrose PNG:\n",
-                traceback.format_exc(),
-            )
-            return False
-
     def _save_windrose_pair(
         self,
         i,
@@ -417,42 +278,209 @@ class GlobalMap:
         v_col,
         urel_col,
         vrel_col,
-        out_u,
-        out_rel,
-        hide_cardinal_labels=False,
+        out,
+        center_image_path=None,
+        center_image_zoom=0.18,
+        center_image_alpha=0.85,
     ):
         """Save both ambient (u_col/v_col) and relative (urel_col/vrel_col) windrose PNGs for index i."""
         saved_u = False
         saved_rel = False
 
-        # ambient/absolute wind (u10/v10)
         try:
-            if u_col is not None and v_col is not None and len(u_col) > 0:
-                # ambient/absolute wind should always show cardinal labels
-                saved_u = self._save_windrose_png(
-                    u_col,
-                    v_col,
-                    out_u,
-                    title=f"Pt {i} - ambient",
-                    hide_cardinal_labels=False,
-                    invert_orientation=True,
-                )
-        except Exception:
-            saved_u = False
+            # prepare arrays
+            import matplotlib
 
-        # relative wind (u_rel/v_rel)
-        try:
-            if urel_col is not None and vrel_col is not None and len(urel_col) > 0:
-                saved_rel = self._save_windrose_png(
-                    urel_col,
-                    vrel_col,
-                    out_rel,
-                    title=f"Pt {i} - relative",
-                    hide_cardinal_labels=hide_cardinal_labels,
-                    invert_orientation=False,
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+
+            u_abs = (
+                np.asarray(u_col, dtype=float) if u_col is not None else np.array([])
+            )
+            v_abs = (
+                np.asarray(v_col, dtype=float) if v_col is not None else np.array([])
+            )
+            u_rel = (
+                np.asarray(urel_col, dtype=float)
+                if urel_col is not None
+                else np.array([])
+            )
+            v_rel = (
+                np.asarray(vrel_col, dtype=float)
+                if vrel_col is not None
+                else np.array([])
+            )
+
+            mask_abs = np.isfinite(u_abs) & np.isfinite(v_abs)
+            mask_rel = np.isfinite(u_rel) & np.isfinite(v_rel)
+            u_abs = u_abs[mask_abs]
+            v_abs = v_abs[mask_abs]
+            u_rel = u_rel[mask_rel]
+            v_rel = v_rel[mask_rel]
+
+            # compute speeds and dirs
+            s_abs = np.sqrt(u_abs**2 + v_abs**2) if u_abs.size > 0 else np.array([])
+            d_abs = (
+                (np.degrees(np.arctan2(-u_abs, -v_abs)) % 360)
+                if u_abs.size > 0
+                else np.array([])
+            )
+            s_rel = np.sqrt(u_rel**2 + v_rel**2) if u_rel.size > 0 else np.array([])
+            d_rel = (
+                (np.degrees(np.arctan2(-u_rel, -v_rel)) % 360)
+                if u_rel.size > 0
+                else np.array([])
+            )
+
+            # create combined fig
+            fig = plt.figure(figsize=(20, 5), dpi=300)
+            # top-left: relative windrose
+            ax1 = fig.add_subplot(1, 4, 1, projection="windrose")
+            # top-right: absolute windrose
+            ax2 = fig.add_subplot(1, 4, 2, projection="windrose")
+            # bottom-left: histogram u
+            ax3 = fig.add_subplot(1, 4, 3)
+            # bottom-left: histogram v
+            ax4 = fig.add_subplot(1, 4, 4)
+
+            # reuse global bins if available
+            bins = globals().get("_GLOBAL_WINDROSE_BINS", None)
+
+            if u_rel.size > 0:
+                if bins is not None:
+                    ax1.bar(
+                        d_rel,
+                        s_rel,
+                        bins=bins,
+                        normed=True,
+                        opening=0.8,
+                        edgecolor="white",
+                    )
+                else:
+                    ax1.bar(d_rel, s_rel, normed=True, opening=0.8, edgecolor="white")
+                # hide cardinal labels on relative
+                try:
+                    import matplotlib.pyplot as _plt
+
+                    _plt.setp(ax1.get_xticklabels(), visible=False)
+                except Exception:
+                    try:
+                        ax1.set_xticklabels([])
+                    except Exception:
+                        raise
+                ax1.set_title(f"Pt {i} - relative", fontsize=10)
+                try:
+                    ax1.set_legend(fontsize=8, title_fontsize=10)
+                except Exception:
+                    try:
+                        ax1.legend(fontsize=8)
+                    except Exception:
+                        raise
+                # overlay image on relative windrose if provided
+                if center_image_path and os.path.exists(center_image_path):
+                    try:
+                        img = plt.imread(center_image_path)
+                        oi = OffsetImage(img, zoom=float(center_image_zoom))
+                        try:
+                            oi.set_alpha(float(center_image_alpha))
+                        except Exception:
+                            raise
+                        ab = AnnotationBbox(
+                            oi,
+                            (0.5, 0.5),
+                            frameon=False,
+                            xycoords="axes fraction",
+                            box_alignment=(0.5, 0.5),
+                        )
+                        ax1.add_artist(ab)
+                    except Exception:
+                        raise
+
+            else:
+                ax1.text(0.5, 0.5, "No relative samples", ha="center", va="center")
+
+            if u_abs.size > 0:
+                if bins is not None:
+                    ax2.bar(
+                        d_abs,
+                        s_abs,
+                        bins=bins,
+                        normed=True,
+                        opening=0.8,
+                        edgecolor="white",
+                    )
+                else:
+                    ax2.bar(d_abs, s_abs, normed=True, opening=0.8, edgecolor="white")
+                ax2.set_title(f"Pt {i} - ambient", fontsize=10)
+                try:
+                    ax2.set_legend(fontsize=8, title_fontsize=10)
+                except Exception:
+                    try:
+                        ax2.legend(fontsize=8)
+                    except Exception:
+                        raise
+            else:
+                ax2.text(0.5, 0.5, "No ambient samples", ha="center", va="center")
+            if u_rel.size > 0:
+                ax3.hist(
+                    u_rel,
+                    bins=20,
+                    color="red",
+                    edgecolor="white",
+                    alpha=0.5,
+                    label="Relative Speed (u)",
                 )
+                ax3.hist(
+                    u_abs,
+                    bins=20,
+                    color="green",
+                    edgecolor="white",
+                    alpha=0.5,
+                    label="Wind Speed (u)",
+                )
+                ax3.set_title("Horizontal speed distribution")
+                ax3.set_xlabel("Speed (m/s)")
+                ax3.legend(fontsize=8)
+            else:
+                ax3.text(0.5, 0.5, "No relative samples", ha="center", va="center")
+            if v_rel.size > 0:
+                ax4.hist(
+                    v_rel,
+                    bins=20,
+                    color="red",
+                    edgecolor="white",
+                    alpha=0.5,
+                    label="Relative Speed (v)",
+                )
+                ax4.hist(
+                    v_abs,
+                    bins=20,
+                    color="green",
+                    edgecolor="white",
+                    alpha=0.5,
+                    label="Wind Speed (v)",
+                )
+                ax4.set_title("Vertical speed distribution")
+                ax4.set_xlabel("Speed (m/s)")
+                ax4.legend(fontsize=8)
+            else:
+                ax4.text(0.5, 0.5, "No relative samples", ha="center", va="center")
+
+            try:
+                fig.subplots_adjust(hspace=0.35, wspace=0.25)
+            except Exception:
+                raise
+            if out:
+                try:
+                    parent = os.path.dirname(out)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    fig.savefig(out, bbox_inches="tight")
+                except Exception:
+                    raise
+            plt.close(fig)
         except Exception:
-            saved_rel = False
+            print("[ERROR] Error to create figures")
 
         return saved_u, saved_rel
 
@@ -523,8 +551,8 @@ class GlobalMap:
         windrose_folder=None,
         option="outbound",
         rotation=100,
-        compute_gains=True,
         per_point_rel_windrose=False,
+        center_image_path=None,
     ):
         """Create global folium map aggregating many CSV routes.
 
@@ -536,6 +564,17 @@ class GlobalMap:
             windrose_folder: optional folder to save windrose PNGs (not required).
         """
         out_map_path = f"global_map_{ship}_{option}_{rotation}.html"
+
+        # If no center image path provided, attempt to auto-detect the user's
+        # casco silhouette in the repo (common location used by the user).
+        if center_image_path is None:
+            candidate = r"C:\Users\jung_\OneDrive\Documentos\Poli\TPN\CENPES Descarbonização\casco.png"
+            try:
+                if os.path.exists(candidate):
+                    center_image_path = candidate
+            except Exception:
+                center_image_path = None
+
         # Read CSVs and take outbound halves
         dfs = []
         for f in tqdm(csv_files, total=len(csv_files)):
@@ -567,9 +606,10 @@ class GlobalMap:
         modal_html = """
         <style>
         #windroseModal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.7); }
-        /* increased modal content max-width so two windroses display comfortably */
-        #windroseModalContent { margin: 3% auto; padding: 20px; width: 90%; max-width: 1600px; background: white; border-radius: 8px; text-align: center; }
-        #windroseModalContent img { max-width: 100%; height: auto; }
+        /* modal content: responsive width and a max-width to control very large screens; allow vertical scrolling for tall images */
+        #windroseModalContent { margin: 3% auto; padding: 20px; width: 90%; max-width: 1400px; background: white; border-radius: 8px; text-align: center; overflow: auto; }
+        /* ensure image scales but doesn't overflow viewport vertically */
+        #windroseModalContent img { max-width: 100%; max-height: 75vh; height: auto; }
         #windroseClose { position: absolute; right: 20px; top: 20px; color: white; font-size: 28px; font-weight: bold; cursor: pointer; }
         </style>
         <div id="windroseModal">
@@ -586,64 +626,23 @@ class GlobalMap:
         # Indices to process
         indices = list(range(n_points))
 
-        # Helper for gain images (defined even if compute_gains is False)
-        gain_dir = windrose_folder or os.path.join(
-            "figures", f"gain_histograms_{ship}_{rotation}"
+        # Helper for gain images (defined even if compute_gains is False).
+        # Create separate folders for outbound/return by including `option` in the path.
+        base_fig_dir = windrose_folder if windrose_folder else "figures"
+        gain_dir = os.path.join(
+            base_fig_dir, f"gain_histograms_{ship}_{rotation}_{option}"
         )
         os.makedirs(gain_dir, exist_ok=True)
 
-        def _gain_path_for(i):
-            return os.path.join(gain_dir, f"gain_pt_{i:04d}.png")
-
-        # If requested, compute gains and prepare histograms + spatial maps
-        if compute_gains:
-            # Vectorize gains into matrix shape (n_files, n_points)
-            gain_mat = np.vstack([d["gain"].values[:n_points] for d in dfs])
-            # sanitize: replace non-finite with np.nan
-            gain_mat = np.where(np.isfinite(gain_mat), gain_mat, np.nan)
-
-            # Precompute per-point mean gain in percent to keep histogram and
-            # popup numbers consistent (mean computed in _save_gain_hist_png
-            # multiplies by 100). Use nanmean so points with all-NaN remain NaN.
-            try:
-                mean_gain_arr = np.nanmean(gain_mat * 100.0, axis=0)
-            except Exception:
-                mean_gain_arr = np.array([np.nan] * gain_mat.shape[1])
-
-            # Generate histogram PNGs in parallel
-            n_jobs = max(1, (os.cpu_count() or 2) - 1)
-            print(
-                f"[INFO] Generating {len(indices)} gain histograms using {n_jobs} jobs into {gain_dir}"
-            )
-
-            Parallel(n_jobs=n_jobs, backend="loky")(
-                delayed(self._save_gain_hist_png)(
-                    gain_mat[:, i], _gain_path_for(i), title=f"Gain Pt {i}"
-                )
-                for i in tqdm(indices)
-            )
-
-            # Also produce spatial summary maps (std, probability >=10%, and count heatmap)
-            try:
-                self.create_spatial_maps(
-                    gain_mat, ref_df, out_dir=gain_dir, option=option
-                )
-            except Exception as e:
-                print(f"[WARNING] create_spatial_maps failed: {e}")
-        else:
-            # placeholder mean_gain_arr (all NaN) when not computing gains
-            mean_gain_arr = np.array([np.nan] * n_points)
-
         # If requested, generate relative windrose PNGs per point (one image per index)
-        rel_dir = None
+        image_dir = None
         if per_point_rel_windrose:
-            rel_dir = windrose_folder or os.path.join(
-                "figures", f"windroses_{ship}_{rotation}"
+            # Save windroses in a folder that includes ship, rotation and option
+            base_fig_dir = windrose_folder if windrose_folder else "figures"
+            image_dir = os.path.join(
+                base_fig_dir, f"windroses_{ship}_{rotation}_{option}"
             )
-            os.makedirs(rel_dir, exist_ok=True)
-
-            def _rel_path_for(i):
-                return os.path.join(rel_dir, f"windrose_pt_{i:04d}_rel.png")
+            os.makedirs(image_dir, exist_ok=True)
 
             # compute global vmax across all selected dfs so bins are consistent
             global_max = 0.0
@@ -681,7 +680,6 @@ class GlobalMap:
             except Exception:
                 bins = None
 
-            # expose bins to _save_windrose_png via a globals slot so the saver
             # can pick them up without changing many call sites.
             try:
                 globals()["_GLOBAL_WINDROSE_BINS"] = bins
@@ -689,20 +687,19 @@ class GlobalMap:
                 pass
 
             print(
-                f"[INFO] Generating relative windrose PNGs into {rel_dir} (bins={bins})"
+                f"[INFO] Generating relative windrose PNGs into {image_dir} (bins={bins})"
             )
             saved_points = 0
             saved_rel_count = 0
             saved_abs_count = 0
             for i in tqdm(indices):
-                # collect both relative (u_rel/v_rel) and ambient (u10/v10) across all dfs for point i
                 u_rel_list = []
                 v_rel_list = []
                 u_abs_list = []
                 v_abs_list = []
                 for d in dfs:
                     if i < len(d):
-                        # relative first
+                        # relative
                         if "u_rel" in d.columns and "v_rel" in d.columns:
                             try:
                                 val_u = d.iloc[i]["u_rel"]
@@ -711,7 +708,7 @@ class GlobalMap:
                                     u_rel_list.append(val_u)
                                     v_rel_list.append(val_v)
                             except Exception:
-                                pass
+                                print("[ERROR] Relative speed error")
                         # ambient / absolute wind
                         if "u10" in d.columns and "v10" in d.columns:
                             try:
@@ -721,27 +718,22 @@ class GlobalMap:
                                     u_abs_list.append(val_u)
                                     v_abs_list.append(val_v)
                             except Exception:
-                                pass
-
+                                print("[ERROR] Wind speed error")
                 # skip if neither has samples
                 if len(u_rel_list) == 0 and len(u_abs_list) == 0:
                     continue
 
-                out_rel = _rel_path_for(i)
-                out_abs = os.path.join(rel_dir, f"windrose_pt_{i:04d}_abs.png")
-
+                output = os.path.join(image_dir, f"windrose_pt_{i:04d}.png")
                 try:
-                    # ambient windrose should always show cardinal direction labels;
-                    # hide_cardinal_labels applies only to the relative windrose
                     saved_u, saved_rel = self._save_windrose_pair(
                         i,
                         u_abs_list,
                         v_abs_list,
                         u_rel_list,
                         v_rel_list,
-                        out_abs,
-                        out_rel,
-                        hide_cardinal_labels=True,
+                        output,
+                        center_image_path=center_image_path,
+                        center_image_zoom=0.1,
                     )
                     if saved_u:
                         saved_abs_count += 1
@@ -750,87 +742,41 @@ class GlobalMap:
                     if saved_u or saved_rel:
                         saved_points += 1
                 except Exception:
-                    # ignore failures per point
-                    continue
+                    raise
 
             try:
                 print(
-                    f"[INFO] Windrose PNGs generated: {saved_points}/{len(indices)} points — rel={saved_rel_count}, abs={saved_abs_count} into {rel_dir}"
+                    f"[INFO] Windrose PNGs generated: {saved_points}/{len(indices)} points — rel={saved_rel_count}, abs={saved_abs_count} into {image_dir}"
                 )
             except Exception:
                 pass
 
         # Add markers referencing saved images (use relative path from out_map_path dir)
         for i in indices:
-            # choose image path: relative windrose preferred, else gain histogram if available
-            img_path = None
-            img_title = ""
-            # prefer showing both relative and ambient windrose thumbnails when available
-            if per_point_rel_windrose and rel_dir is not None:
-                rel_candidate = os.path.join(rel_dir, f"windrose_pt_{i:04d}_rel.png")
-                abs_candidate = os.path.join(rel_dir, f"windrose_pt_{i:04d}_abs.png")
-                has_rel = os.path.exists(rel_candidate)
-                has_abs = os.path.exists(abs_candidate)
+            if per_point_rel_windrose and image_dir is not None:
+                img_candidate = os.path.join(image_dir, f"windrose_pt_{i:04d}.png")
+                has_img = os.path.exists(img_candidate)
             else:
-                has_rel = has_abs = False
+                has_img = False
 
             img_html = ""
-            if has_rel or has_abs:
-                rel_rel = (
+            if has_img:
+                relative_img_path = (
                     os.path.relpath(
-                        rel_candidate, start=os.path.dirname(out_map_path) or "."
+                        img_candidate, start=os.path.dirname(out_map_path) or "."
                     ).replace("\\", "/")
-                    if has_rel
-                    else None
-                )
-                rel_abs = (
-                    os.path.relpath(
-                        abs_candidate, start=os.path.dirname(out_map_path) or "."
-                    ).replace("\\", "/")
-                    if has_abs
+                    if has_img
                     else None
                 )
 
                 # two thumbnails side-by-side when both exist
-                if has_rel and has_abs:
+                if has_img:
                     img_html = (
                         f'<div style="display:flex; gap:16px; justify-content:center; align-items:flex-start; margin-top:8px;">'
-                        f"<a href=\"javascript:void(0)\" onclick=\"showWindrose('{rel_rel}','Pt {i} - relative')\">"
-                        f'<img src="{rel_rel}" alt="Pt {i} - relative" style="max-width:420px; height:auto; border:1px solid #ddd; border-radius:4px;"/>'
+                        f"<a href=\"javascript:void(0)\" onclick=\"showWindrose('{relative_img_path}','Pt {i} - relative')\">"
+                        f'<img src="{relative_img_path}" alt="Pt {i} - relative" style="max-width:1400px; max-height:80vh; height:auto; border:1px solid #ddd; border-radius:4px;"/>'
                         f"</a>"
-                        f"<a href=\"javascript:void(0)\" onclick=\"showWindrose('{rel_abs}','Pt {i} - ambient')\">"
-                        f'<img src="{rel_abs}" alt="Pt {i} - ambient" style="max-width:420px; height:auto; border:1px solid #ddd; border-radius:4px;"/>'
-                        f"</a></div>"
                     )
-                else:
-                    # single thumbnail
-                    chosen = rel_rel if has_rel else rel_abs
-                    title = f"Pt {i} - relative" if has_rel else f"Pt {i} - ambient"
-                    img_html = (
-                        f'<div style="text-align:center; margin-top:8px;">'
-                        f"<a href=\"javascript:void(0)\" onclick=\"showWindrose('{chosen}','{title}')\">"
-                        f'<img src="{chosen}" alt="{title}" style="max-width:780px; height:auto; border:1px solid #ddd; border-radius:4px;"/>'
-                        f"</a></div>"
-                    )
-            else:
-                # fallback: show gain histogram if available
-                if compute_gains:
-                    candidate = _gain_path_for(i)
-                    if os.path.exists(candidate):
-                        rel = os.path.relpath(
-                            candidate, start=os.path.dirname(out_map_path) or "."
-                        ).replace("\\", "/")
-                        img_html = (
-                            f'<div style="text-align:center; margin-top:6px;">'
-                            f"<a href=\"javascript:void(0)\" onclick=\"showWindrose('{rel}','Gain Pt {i}')\">"
-                            f'<img src="{rel}" alt="Gain Pt {i}" style="max-width:780px; height:auto; border:1px solid #ddd; border-radius:4px;"/>'
-                            f"</a></div>"
-                        )
-                    else:
-                        img_html = "<div style='text-align:center; color:#888; margin-top:6px;'>Imagem não disponível</div>"
-                else:
-                    img_html = "<div style='text-align:center; color:#888; margin-top:6px;'>Imagem não disponível</div>"
-
             # Marker location from reference df
             try:
                 lat_i = float(ref_df.loc[i, "LAT"])
@@ -838,32 +784,11 @@ class GlobalMap:
             except Exception:
                 continue
 
-            # Use precomputed mean gain (percent) if available
-            try:
-                mean_gain = float(mean_gain_arr[i])
-            except Exception:
-                mean_gain = float("nan")
-
-            if np.isfinite(mean_gain):
-                if mean_gain < 0.0:
-                    mcolor = "#7e3fb2"
-                elif mean_gain < 5.0:
-                    mcolor = "#ff4d4d"
-                elif mean_gain < 10.0:
-                    mcolor = "#ff8c1a"
-                elif mean_gain < 15.0:
-                    mcolor = "#ffd24d"
-                else:
-                    mcolor = "#3ddc84"
-                mean_line = f'<div style="margin-top:6px; font-weight:bold;">Mean gain: {mean_gain:.2f}%</div>'
-            else:
-                mcolor = "#888888"
-                mean_line = (
-                    '<div style="margin-top:6px; color:#888;">Mean gain: N/A</div>'
-                )
+            mcolor = "#888888"
+            mean_line = '<div style="margin-top:6px; color:#888;">Mean gain: N/A</div>'
 
             popup_html = (
-                f"<div style='font-family: Arial; font-size:12px; width:1100px;'><b>Point {i}</b><br>"
+                f"<div style='font-family: Arial; font-size:12px; width:90%; max-width:1400px; margin:0 auto;'><b>Point {i}</b><br>"
                 f"Lat: {lat_i:.4f} Lon: {lon_i:.4f}<br>"
                 f"{mean_line}"
                 f"{img_html}</div>"
@@ -876,7 +801,7 @@ class GlobalMap:
                 fill=True,
                 fillColor=mcolor,
                 fillOpacity=0.9,
-                popup=folium.Popup(popup_html, max_width=900),
+                popup=folium.Popup(popup_html, max_width=1400),
             ).add_to(self.m)
 
         # Add JS to adjust marker radius dynamically with zoom (makes points smaller when zoomed out)
@@ -1171,17 +1096,6 @@ class GlobalMap:
         print(f"[INFO] Saved count heatmap to {count_path}")
 
 
-def calc_mean_gain_parallel(csv_files, n_jobs=-1):
-    print(f"[INFO] Calculating gain from {len(csv_files)} routes using {n_jobs} cores")
-    # Parallel processing with progress bar
-    results = Parallel(n_jobs=n_jobs, backend="threading")(
-        delayed(process_single_trip)(trip)
-        for trip in tqdm(csv_files, desc="Processing routes")
-    )
-
-    return results
-
-
 def get_windrose_from_route(route_df, output_name="route", ax=None):
     """
     Create windrose from route data with u10, v10 columns
@@ -1239,25 +1153,19 @@ def main():
     parser = argparse.ArgumentParser(description="Wind Route Creator")
     parser.add_argument("-s", "--ship", help="afra or suez")
     parser.add_argument("--rotation", required=True, help="100 or 180")
+    parser.add_argument("--path", required=True, help="outbound or return")
+
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
     routes_csv_path = f"D:/{ship}/route_csvs{int(args.rotation)}"
     csv_files = glob.glob(os.path.join(routes_csv_path, "*.csv"))
+    random.shuffle(csv_files)
     global_map = GlobalMap()
     global_map.create_global_map(
         csv_files,
         ship,
-        option="outbound",
+        option=args.path,
         rotation=int(args.rotation),
-        compute_gains=False,
-        per_point_rel_windrose=True,
-    )
-    global_map.create_global_map(
-        csv_files,
-        ship,
-        option="return",
-        rotation=int(args.rotation),
-        compute_gains=False,
         per_point_rel_windrose=True,
     )
 

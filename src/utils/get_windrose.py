@@ -7,6 +7,8 @@ import os
 import glob
 from tqdm import tqdm
 import random
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+from PIL import Image
 
 
 def get_windrose_from_route(
@@ -15,6 +17,7 @@ def get_windrose_from_route(
     ax=None,
     hide_cardinal_labels=False,
     invert_orientation=True,
+    ship_image_path=r"C:\Users\jung_\OneDrive\Documentos\Poli\TPN\CENPES Descarbonização\casco.png",
 ):
     """
     Create windrose from route data with u10, v10 columns
@@ -28,12 +31,8 @@ def get_windrose_from_route(
     # Extract u10 and v10 from the route dataframe
     u10 = route_df["u10"].values
     v10 = route_df["v10"].values
-    import pdb
-
-    pdb.set_trace()
     # Calculate wind speed and direction
     wind_speed = np.sqrt(u10**2 + v10**2)
-    invert_orientation = True
     if invert_orientation:
         wind_direction = np.degrees(np.arctan2(-u10, -v10)) % 360
     else:
@@ -46,7 +45,17 @@ def get_windrose_from_route(
         ax = WindroseAxes.from_ax(ax=ax)
     plt.setp(ax.get_xticklabels(), fontsize=16)  # Ângulos (N, NE, E, etc.)
     plt.setp(ax.get_yticklabels(), fontsize=14)  # Percentuais radiais
-
+    if os.path.exists(ship_image_path):
+        img = Image.open(ship_image_path).convert("RGBA")
+        oi = OffsetImage(img, zoom=0.1)
+        ab = AnnotationBbox(
+            oi,
+            (0.5, 0.5),
+            frameon=False,
+            xycoords="axes fraction",
+            box_alignment=(0.5, 0.5),
+        )
+        ax.add_artist(ab)
     if hide_cardinal_labels:
         # hide compass labels (N, NE, E, ...)
         plt.setp(ax.get_xticklabels(), visible=False)
@@ -117,7 +126,13 @@ def plot_6_windroses():
 
 
 def get_windrose_from_csvs_at_index(
-    csv_paths, index, use_window=False, window=101, output_name=None, ax=None
+    csv_paths,
+    point,
+    use_window=False,
+    window=101,
+    output_name=None,
+    ax=None,
+    wind_option=("u_rel", "v_rel"),
 ):
     """
     Build a windrose from a list of CSV files by taking the same index
@@ -138,6 +153,8 @@ def get_windrose_from_csvs_at_index(
     """
     u_list = []
     v_list = []
+    u10_list = []
+    v10_list = []
     for p in tqdm(csv_paths):
         if not os.path.exists(p):
             print(f"File not found, skipping: {p}")
@@ -157,27 +174,25 @@ def get_windrose_from_csvs_at_index(
             if window < 1:
                 raise ValueError("window must be >= 1")
             half = window // 2
-            start = max(0, index - half)
-            end = min(n, index + half + 1)
+            start = max(0, point - half)
+            end = min(n, point + half + 1)
             sub = df.iloc[start:end]
-            u_list.extend(sub["u_rel"].values.tolist())
-            v_list.extend(sub["v_rel"].values.tolist())
+            u_list.extend(sub[wind_option[0]].values.tolist())
+            v_list.extend(sub[wind_option[1]].values.tolist())
         else:
-            if index < 0 or index >= n:
-                print(f"Index {index} out of range for {p}, skipping")
+            if point < 0 or point >= n:
+                print(f"Index {point} out of range for {p}, skipping")
                 continue
-            row = df.iloc[index]
-            u_list.append(row["u_rel"])
-            v_list.append(row["v_rel"])
-
+            row = df.iloc[point]
+            u_list.append(row[wind_option[0]])
+            v_list.append(row[wind_option[1]])
+            u10_list.append(row["u10"])
+            v10_list.append(row["v10"])
     if len(u_list) == 0:
         raise ValueError("No valid u_rel/v_rel samples collected from provided CSVs")
-
     tmp_df = pd.DataFrame({"u10": np.array(u_list), "v10": np.array(v_list)})
-
     if output_name is None:
-        output_name = f"csvs_index_{index}_n{len(u_list)}"
-
+        output_name = f"csvs_index_{point}_n{len(u_list)}"
     return get_windrose_from_route(tmp_df, output_name=output_name, ax=ax)
 
 
@@ -280,11 +295,11 @@ def main():
     # )
 
     # args = parser.parse_args()
-    files = glob.glob(r"D:\castro_alves_afra\route_csvs100\*.csv")
+    files = glob.glob(r"D:\abdias_suez\route_csvs100\*.csv")
     # Shuffle files so the selection at the same index samples different routes
     random.shuffle(files)
-    files = files[:500]
-    get_windrose_from_csvs_at_index(files, 50)
+    get_windrose_from_csvs_at_index(files[:1000], point=272)
+
     # get_windrose_from_csvs_all(files, option="outbound")
     # get_windrose_from_csvs_all(files, option="return")
     # if args.multiple:

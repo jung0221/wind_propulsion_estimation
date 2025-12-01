@@ -365,10 +365,16 @@ class ProcessMap:
         v_ship = self.vs_ms * np.cos(np.radians(ang_ship))
         return u_ship, v_ship
 
-    def calc_relative_velocity_and_angle(self, u10, v10, u_ship, v_ship):
+    def rotate_vel(self, u, v, ang_ship):
+        u_rel = u * np.sin(ang_ship) + v * np.cos(ang_ship)
+        v_rel = -u * np.cos(ang_ship) + v * np.sin(ang_ship)
+        return u_rel, v_rel
 
-        u_rel = u_ship - u10
-        v_rel = v_ship - v10
+    def calc_relative_velocity_and_angle(self, u10, v10, angle_ship, u_ship, v_ship):
+        u_rel_xy = u10 - u_ship
+        v_rel_xy = v10 - v_ship
+        u_rel, v_rel = self.rotate_vel(u_rel_xy, v_rel_xy, np.radians(angle_ship))
+        # Angulo relativo em graus
         angle_rel = self.wind_rel(u_rel, v_rel)
         return u_rel, v_rel, angle_rel
 
@@ -424,7 +430,7 @@ class ProcessMap:
 
             # Relative parameters
             u_rel_i, v_rel_i, angle_rel_i = self.calc_relative_velocity_and_angle(
-                res[0], res[1], u_ship_i, v_ship_i
+                res[0], res[1], res[2], u_ship_i, v_ship_i
             )
             u_rel.append(u_rel_i)
             v_rel.append(v_rel_i)
@@ -520,9 +526,9 @@ if __name__ == "__main__":
     calculate_forces = False if args.no_forces else True
 
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
-    year = 2020
+    year = 2021
     current_time = pd.Timestamp(f"{year}-{int(args.start_month)}-01 00:00:00")
-    wind_csv = "data.csv"
+    wind_csv = "data_v2.csv"
 
     forces_path = f"../{ship}/forces_CFD_v2.csv"
 
