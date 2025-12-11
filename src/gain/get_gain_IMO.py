@@ -572,11 +572,10 @@ class GainIMO:
 
         u_wind = V_wz * -np.cos(wind_angle)
         v_wind = V_wz * -np.sin(wind_angle)
-
         u_rel = u_wind - u_ship
         v_rel = v_wind
-        u_rel = u_rel * np.sin(wind_angle) + v_rel * np.cos(wind_angle)
-        v_rel = -u_rel * np.cos(wind_angle) + v_rel * np.sin(wind_angle)
+        # u_rel = u_rel * np.sin(wind_angle) + v_rel * np.cos(wind_angle)
+        # v_rel = -u_rel * np.cos(wind_angle) + v_rel * np.sin(wind_angle)
 
         rel_ang = np.degrees(np.arctan2(v_rel, u_rel)) % 360
 

@@ -18,6 +18,7 @@ class ProcessMap:
         route_path,
         wind_path,
         forces_path,
+        old_forces_path,
         ship,
         rotation,
         calculate_forces=True,
@@ -30,6 +31,7 @@ class ProcessMap:
         self.rotation = int(rotation)
         self.folder = os.path.dirname(self.route_path).split("/")[1]
         self.forces_path = forces_path
+        self.old_forces_path = old_forces_path
         self._lock = threading.Lock()  # Add thread lock
         self.lat = 0
         self.lon = 0
@@ -92,6 +94,7 @@ class ProcessMap:
             try:
                 print("[INFO] Loading thrust data")
                 self.df_forces = pd.read_csv(self.forces_path)
+                self.old_df_forces = pd.read_csv(self.old_forces_path)
                 self.angle_list = self.df_forces["Angulo"].unique()
                 self.angle_list = np.append(self.angle_list, 360)
             except FileNotFoundError as e:
@@ -202,7 +205,8 @@ class ProcessMap:
             ceil_angle = self.angle_list[pos]
         return floor_angle, ceil_angle
 
-    def get_forces(self, ang, vel, force="fx", draft=None):
+    def get_forces(self, ang, vel, force="fx", draft=None, index=0):
+
         ang = float(ang) % 360.0
         # use provided draft if passed, otherwise use self.draft
         draft_local = self.draft if draft is None else draft
@@ -217,11 +221,11 @@ class ProcessMap:
         )
         ang_ceil_for_interp = float(ceil_angle) if float(ceil_angle) != 0 else 360.0
 
-        def get_sorted_rows(angle_sel):
-            sel = self.df_forces[
-                (self.df_forces["Angulo"] == angle_sel)
-                & (self.df_forces["Calado"] == draft_local)
-                & (self.df_forces["Rotacao"] == self.rotation)
+        def get_sorted_rows(angle_sel, force_df):
+            sel = force_df[
+                (force_df["Angulo"] == angle_sel)
+                & (force_df["Calado"] == draft_local)
+                & (force_df["Rotacao"] == self.rotation)
             ]
             if sel.empty:
                 raise ValueError(
@@ -230,9 +234,14 @@ class ProcessMap:
             sel = sel.sort_values("Vw")
             return sel
 
-        # select rows AFTER angles resolved
-        floor_sel = get_sorted_rows(int(ang_floor) % 360)
-        ceil_sel = get_sorted_rows(int(ang_ceil_for_select) % 360)
+        if ang_floor == 210 or ang_floor == 120:
+            floor_sel = get_sorted_rows(int(ang_floor) % 360, self.old_df_forces)
+            ceil_sel = get_sorted_rows(
+                int(ang_ceil_for_select) % 360, self.old_df_forces
+            )
+        else:
+            floor_sel = get_sorted_rows(int(ang_floor) % 360, self.df_forces)
+            ceil_sel = get_sorted_rows(int(ang_ceil_for_select) % 360, self.df_forces)
 
         # Arrays for interpolation along Vw
         Vw_floor = floor_sel["Vw"].to_numpy(dtype=float)
@@ -268,6 +277,7 @@ class ProcessMap:
 
         coef_x = f / denom if denom > 0 else np.nan
         new_f = coef_x * 0.5 * 1.2 * (vel**2) * self.Ax / 1000.0
+
         return new_f
 
     def get_power_rotor(self, ang, vel, moment="Mz_rotor", draft=None):
@@ -405,10 +415,10 @@ class ProcessMap:
             pbar.set_description(f"[INFO] From time: {self.timestamp}, {cond}")
             if cond == "carreg":
                 R_T[i] = 744
-                P_E[i] = 4592
+                P_E[i] = 4592 / 0.63
             else:
                 R_T[i] = 694
-                P_E[i] = 4282
+                P_E[i] = 4282 / 0.63
 
             if i == int(total_range[-1] / 2):
                 z_height = 35.5
@@ -444,8 +454,10 @@ class ProcessMap:
             self.timestamp += pd.Timedelta(seconds=self.dt)
 
             if self.calculate_forces:
-                fx_total = self.get_forces(angle_rel_i, vel_mag, "fx")
-                fx_rotores = self.get_forces(angle_rel_i, vel_mag, "fx_rotores")
+                fx_total = self.get_forces(angle_rel_i, vel_mag, "fx", index=i)
+                fx_rotores = self.get_forces(
+                    angle_rel_i, vel_mag, "fx_rotores", index=i
+                )
                 if fx_rotores > self.RT:
                     fx_rotores = self.RT
                 p_cons.append(self.get_power_rotor(angle_rel_i, vel_mag) / 1000)
@@ -466,7 +478,7 @@ class ProcessMap:
             force_x_rotores = np.array(force_x_rotores)
             p_cons = np.array(p_cons)
             force_x_casco_sup = force_x - force_x_rotores
-            p_prop = (R_T - force_x) * self.vs_ms
+            p_prop = ((R_T - force_x_rotores) * self.vs_ms) / 0.63
             P_E_ = p_cons + p_prop
             gain = 1 - P_E_ / P_E
         else:
@@ -518,6 +530,8 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--ship", help="afra or suez")
     parser.add_argument("--rotation", required=True, help="100 or 180")
     parser.add_argument("--start-month", required=True, help="Start month")
+    parser.add_argument("--year", required=True, type=int, help="Year")
+
     parser.add_argument(
         "--no-forces", action="store_true", help="Do not calculate forces"
     )
@@ -526,17 +540,19 @@ if __name__ == "__main__":
     calculate_forces = False if args.no_forces else True
 
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
-    year = 2021
+    year = args.year
+
     current_time = pd.Timestamp(f"{year}-{int(args.start_month)}-01 00:00:00")
-    wind_csv = "data_v2.csv"
+    wind_csv = "data.csv"
 
-    forces_path = f"../{ship}/forces_CFD_v2.csv"
-
+    forces_path = f"../{ship}/forces_CFD_v3.csv"
+    old_forces_path = f"../{ship}/forces_CFD_v2.csv"
     map_processer = ProcessMap(
         timestamp=current_time,
         route_path=f"../{ship}/ais/{wind_csv}",
         wind_path=f"../{ship}/gribs_2020/{year}_1.grib",
         forces_path=forces_path,
+        old_forces_path=old_forces_path,
         ship=args.ship,
         rotation=args.rotation,
         calculate_forces=calculate_forces,

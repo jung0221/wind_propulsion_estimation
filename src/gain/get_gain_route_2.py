@@ -51,16 +51,15 @@ def compute_trip_means(csv_dir, max_files=None, leg="both", split_index=3693):
                     break
             if gain_col is None:
                 continue
-
             # select leg slice if requested
             if leg == "both" or leg is None:
                 mean_gain = df[gain_col].dropna().mean() * 100.0
             elif leg == "outbound":
                 idx = min(split_index, len(df))
-                mean_gain = df.iloc[:idx][gain_col].dropna().mean() * 100.0
+                mean_gain = df.iloc[: int(idx / 2)][gain_col].dropna().mean() * 100.0
             elif leg == "return":
                 idx = min(split_index, len(df))
-                mean_gain = df.iloc[idx:][gain_col].dropna().mean() * 100.0
+                mean_gain = df.iloc[int(idx / 2) :][gain_col].dropna().mean() * 100.0
             else:
                 # unknown option, treat as both
                 mean_gain = df[gain_col].dropna().mean() * 100.0
