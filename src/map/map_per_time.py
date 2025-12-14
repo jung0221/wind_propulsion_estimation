@@ -2,9 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import folium
-import glob
 import argparse
-import random
 
 
 class MapPerRoute:
@@ -13,7 +11,7 @@ class MapPerRoute:
     ):
         self.v_s = 12  # knots
         self.R_T = 744
-        self.P_E = 4592
+        self.P_E = 4592 / 0.63
         self.eta_d = 0.7
         self.eta_rot = 0.9
         self.P_B = self.P_E / self.eta_d
@@ -37,7 +35,7 @@ class MapPerRoute:
         times = df["time"][:]
         angle = df["angle_rel"][:]
         Fx = df["force_x_total"][:]
-        Vw = (df["u_rel"] ** 2 + df["v_rel"] * 2) ** 0.5
+        v_rel = (df["u_rel"] ** 2 + df["v_rel"] ** 2) ** 0.5
         Fx_rotores = df["force_x_rotor"][:]
         Fx_casco_sup = df["force_x_casco_sup"][:]
         P_cons = df["p_cons"]
@@ -98,7 +96,7 @@ class MapPerRoute:
                     </tr>
                     <tr style="background-color: #f8f9fa;">
                         <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Relative Wind Speed</td>
-                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6;">{Vw.iloc[i]:.2f} m/s</td>
+                        <td style="padding: 4px 8px; border-bottom: 1px solid #dee2e6;">{v_rel.iloc[i]:.2f} m/s</td>
                     </tr>
                     <tr>
                         <td style="padding: 4px 8px; font-weight: bold; border-bottom: 1px solid #dee2e6;">Relative Angle</td>
@@ -165,7 +163,7 @@ class MapPerRoute:
             <div style="text-align: center;">
                 <b>Point {i}</b><br>
                 <span style="color: #666;">Lat: {lat:.3f}° | Lon: {lon:.3f}°</span><br>
-                <span style="color: #2E86AB;">Relative Wind: {Vw.iloc[i]:.1f} m/s | Angle: {int(angle.iloc[i])}°</span><br>
+                <span style="color: #2E86AB;">Relative Wind: {v_rel.iloc[i]:.1f} m/s | Angle: {int(angle.iloc[i])}°</span><br>
                 <span style="color: {get_color(Fx.iloc[i])}; font-weight: bold;">Fx: {Fx.iloc[i]:.1f} kN</span> | 
             </div>
             """
@@ -251,8 +249,8 @@ class MapPerRoute:
 def main():
 
     parser = argparse.ArgumentParser(description="Wind Route Creator")
-    parser.add_argument("-d", "--data", help="route csv file")
-    parser.add_argument("-o", "--output", help="output folder")
+    parser.add_argument("-d", "--data", required=True, help="route csv file")
+    parser.add_argument("-o", "--output", required=True, help="output folder")
 
     args = parser.parse_args()
     map_creator = MapPerRoute()

@@ -47,7 +47,7 @@ def get_windrose_from_route(
     plt.setp(ax.get_yticklabels(), fontsize=14)  # Percentuais radiais
     if os.path.exists(ship_image_path):
         img = Image.open(ship_image_path).convert("RGBA")
-        oi = OffsetImage(img, zoom=0.1)
+        oi = OffsetImage(img, zoom=0.2)
         ab = AnnotationBbox(
             oi,
             (0.5, 0.5),
@@ -55,6 +55,7 @@ def get_windrose_from_route(
             xycoords="axes fraction",
             box_alignment=(0.5, 0.5),
         )
+        ax.set_xticklabels([])
         ax.add_artist(ab)
     if hide_cardinal_labels:
         # hide compass labels (N, NE, E, ...)
@@ -279,9 +280,9 @@ def get_windrose_from_csvs_all(
     if output_name is None:
         output_name = f"all_csvs_n{len(u_arr)}"
     if cols == ("u_rel", "v_rel"):
-        invert_orientation = False
-    else:
         invert_orientation = True
+    else:
+        invert_orientation = False
     return get_windrose_from_route(
         tmp_df, output_name=output_name, ax=ax, invert_orientation=invert_orientation
     )
@@ -298,9 +299,8 @@ def main():
     files = glob.glob(r"D:\abdias_suez\route_csvs100\*.csv")
     # Shuffle files so the selection at the same index samples different routes
     random.shuffle(files)
-    get_windrose_from_csvs_at_index(files[:1000], point=272)
-
-    # get_windrose_from_csvs_all(files, option="outbound")
+    # get_windrose_from_csvs_at_index(files[:1000], point=272)
+    get_windrose_from_csvs_all(files)
     # get_windrose_from_csvs_all(files, option="return")
     # if args.multiple:
     #     plot_6_windroses()

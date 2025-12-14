@@ -494,8 +494,6 @@ class GainIMO:
         new_f = coef_x * 0.5 * 1.2 * (vel**2) * self.Ax / 1000.0
         return new_f, coef_x
 
-        return f, coef_x
-
     def get_power(self, ang, vel):
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
         if ceil_angle == 360:
@@ -577,7 +575,7 @@ class GainIMO:
         # u_rel = u_rel * np.sin(wind_angle) + v_rel * np.cos(wind_angle)
         # v_rel = -u_rel * np.cos(wind_angle) + v_rel * np.sin(wind_angle)
 
-        rel_ang = np.degrees(np.arctan2(v_rel, u_rel)) % 360
+        rel_ang = np.degrees(np.arctan2(-v_rel, -u_rel)) % 360
 
         return np.sqrt(np.power(u_rel, 2) + np.power(v_rel, 2)), rel_ang
 

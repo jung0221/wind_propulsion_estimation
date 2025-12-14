@@ -207,6 +207,8 @@ class ProcessMap:
 
     def get_forces(self, ang, vel, force="fx", draft=None, index=0):
 
+        spin_ratio = (self.rotation * np.pi / 30) * 2.5 / vel
+
         ang = float(ang) % 360.0
         # use provided draft if passed, otherwise use self.draft
         draft_local = self.draft if draft is None else draft
@@ -223,9 +225,7 @@ class ProcessMap:
 
         def get_sorted_rows(angle_sel, force_df):
             sel = force_df[
-                (force_df["Angulo"] == angle_sel)
-                & (force_df["Calado"] == draft_local)
-                & (force_df["Rotacao"] == self.rotation)
+                (force_df["Angulo"] == angle_sel) & (force_df["Calado"] == draft_local)
             ]
             if sel.empty:
                 raise ValueError(
@@ -234,7 +234,7 @@ class ProcessMap:
             sel = sel.sort_values("Vw")
             return sel
 
-        if ang_floor == 210 or ang_floor == 120:
+        if ang > 120 or ang < 240:
             floor_sel = get_sorted_rows(int(ang_floor) % 360, self.old_df_forces)
             ceil_sel = get_sorted_rows(
                 int(ang_ceil_for_select) % 360, self.old_df_forces
@@ -244,16 +244,22 @@ class ProcessMap:
             ceil_sel = get_sorted_rows(int(ang_ceil_for_select) % 360, self.df_forces)
 
         # Arrays for interpolation along Vw
-        Vw_floor = floor_sel["Vw"].to_numpy(dtype=float)
+        Sr_floor = floor_sel["Spin ratio"].to_numpy(dtype=float)
         F_floor = floor_sel[force].to_numpy(dtype=float)
-        Vw_ceil = ceil_sel["Vw"].to_numpy(dtype=float)
+        Sr_ceil = ceil_sel["Spin ratio"].to_numpy(dtype=float)
         F_ceil = ceil_sel[force].to_numpy(dtype=float)
-
         # Force for floor angle
-        f_floor_at_vel = np.interp(vel, Vw_floor, F_floor)
+        idx_f = np.argsort(Sr_floor)
+        Sr_f_sorted = Sr_floor[idx_f]
+        F_f_sorted = F_floor[idx_f]
 
+        idx_c = np.argsort(Sr_ceil)
+        Sr_c_sorted = Sr_ceil[idx_c]
+        F_c_sorted = F_ceil[idx_c]
+
+        f_floor_at_vel = np.interp(spin_ratio, Sr_f_sorted, F_f_sorted)
         # Force for ceil angle
-        f_ceil_at_vel = np.interp(vel, Vw_ceil, F_ceil)
+        f_ceil_at_vel = np.interp(spin_ratio, Sr_c_sorted, F_c_sorted)
 
         # Angular interpolation (handle wrap-around)
         af = ang_floor
@@ -268,19 +274,26 @@ class ProcessMap:
             frac = (a - af) / (ac - af)
             frac = np.clip(frac, 0.0, 1.0)
             f = f_floor_at_vel + frac * (f_ceil_at_vel - f_floor_at_vel)
-        if vel >= 6 and vel <= 12:
-            return f
-        elif vel < 6:
-            denom = 0.5 * 1.2 * (6**2) * self.Ax / 1000.0
-        else:
-            denom = 0.5 * 1.2 * (12**2) * self.Ax / 1000.0
 
-        coef_x = f / denom if denom > 0 else np.nan
-        new_f = coef_x * 0.5 * 1.2 * (vel**2) * self.Ax / 1000.0
+        if spin_ratio >= 2.29 and spin_ratio <= 4.58:
+            return f
+        elif spin_ratio < 2.29:
+            denom = 0.5 * 1.2 * (5.72**2) * self.Ax / 1000.0
+            coef_x = f / denom if denom > 0 else np.nan
+            # sr = 0: cx = 0
+            coef_x_interp = (spin_ratio / (2.29)) * coef_x
+        else:
+            denom = 0.5 * 1.2 * (17.15**2) * self.Ax / 1000.0
+            coef_x = f / denom if denom > 0 else np.nan
+            coef_x_interp = coef_x + ((spin_ratio - 4.58) / (12 - 4.58)) * (0 - coef_x)
+
+        # Voce vai pegar o spin ratio = 1: para sr = 0: cx = 0. Para sr = 2.29, você acha o cx de
+
+        new_f = coef_x_interp * 0.5 * 1.2 * (vel**2) * self.Ax / 1000.0
 
         return new_f
 
-    def get_power_rotor(self, ang, vel, moment="Mz_rotor", draft=None):
+    def get_power_rotor(self, ang, vel, moment="Mz_rotor", draft=None, index=0):
         # allow draft override for parallel workers
         draft_local = self.draft if draft is None else draft
         floor_angle, ceil_angle = self.get_adjacent_angles(ang)
@@ -289,13 +302,11 @@ class ProcessMap:
         floor_moments = self.df_forces[
             (self.df_forces["Angulo"] == floor_angle)
             & (self.df_forces["Calado"] == draft_local)
-            & (self.df_forces["Rotacao"] == self.rotation)
         ]
 
         ceil_moments = self.df_forces[
             (self.df_forces["Angulo"] == ceil_angle)
             & (self.df_forces["Calado"] == draft_local)
-            & (self.df_forces["Rotacao"] == self.rotation)
         ]
         if vel >= 6 and vel <= 10:
             mz_ceil = ceil_moments[moment].iloc[0] + (
@@ -405,7 +416,7 @@ class ProcessMap:
         p_cons = []
         pbar = tqdm(total_range, desc="Ida: Calado Carregado")
         z_height = 27.7
-        self.draft = 16
+        self.draft = 16 if self.ship == "suez" else 15
         self.RT = 744
         R_T = np.zeros(total_range.shape[0])
         P_E = np.zeros(total_range.shape[0])
@@ -414,15 +425,13 @@ class ProcessMap:
         for i in pbar:
             pbar.set_description(f"[INFO] From time: {self.timestamp}, {cond}")
             if cond == "carreg":
-                R_T[i] = 744
-                P_E[i] = 4592 / 0.63
+                R_T[i] = 640
             else:
-                R_T[i] = 694
-                P_E[i] = 4282 / 0.63
-
+                R_T[i] = 475
+            P_E[i] = R_T[i] * self.vs_ms / 0.63
             if i == int(total_range[-1] / 2):
                 z_height = 35.5
-                self.draft = 8.5
+                self.draft = 8.5 if self.ship == "suez" else 6.9
                 self.RT = 696
                 cond = "lastro"
             res = self.get_wind_properties(i, z_height)
@@ -460,13 +469,15 @@ class ProcessMap:
                 )
                 if fx_rotores > self.RT:
                     fx_rotores = self.RT
-                if angle_rel_i > 150 and angle_rel_i < 210:
+                if angle_rel_i > 120 and angle_rel_i < 240:
                     p_cons.append(0)
                 else:
-                    p_cons.append(self.get_power_rotor(angle_rel_i, vel_mag) / 1000)
+                    p_cons.append(
+                        self.get_power_rotor(angle_rel_i, vel_mag, index=i) / 1000
+                    )
+
                 force_x.append(fx_total)
                 force_x_rotores.append(fx_rotores)
-
         u10 = np.array(u10)
         v10 = np.array(v10)
         ang_ship = np.array(ang_ship)
@@ -482,6 +493,7 @@ class ProcessMap:
             force_x_casco_sup = force_x - force_x_rotores
             p_prop = ((R_T - force_x_rotores) * self.vs_ms) / 0.63
             P_E_ = p_cons + p_prop
+            P_E_[P_E_ < 0] = 0
             gain = 1 - P_E_ / P_E
         else:
             force_x = np.zeros(u10.shape)
@@ -547,8 +559,8 @@ if __name__ == "__main__":
     current_time = pd.Timestamp(f"{year}-{int(args.start_month)}-01 00:00:00")
     wind_csv = "data.csv"
 
-    forces_path = f"../{ship}/forces_CFD_v3.csv"
-    old_forces_path = f"../{ship}/forces_CFD_v2.csv"
+    forces_path = f"../{ship}/forces_CFD_v2.csv"
+    old_forces_path = f"../{ship}/forces_CFD_v1.csv"
     map_processer = ProcessMap(
         timestamp=current_time,
         route_path=f"../{ship}/ais/{wind_csv}",
