@@ -623,12 +623,13 @@ def main():
         action="store_true",
         help="Translate velocities +3 m/s from probability matrix",
     )
+    parser.add_argument("--cfd-data", required=True, help="CFD forces data path (csv)")
 
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
-    imo_data_path = "../imo_guidance/global_prob_matrix.csv"
-    forces_data_path = f"../{ship}/forces_CFD_v2.csv"
+    imo_data_path = "data/global_prob_matrix.csv"
+    forces_data_path = args.cfd_data
     drafts = [6.9, 15]
     force_matrix = []
     vk_matrix = []
