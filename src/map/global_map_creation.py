@@ -344,6 +344,19 @@ class GlobalMap:
         n_points = min(len(d) for d in dfs)
         print(f"[INFO] Aggregating {len(dfs)} routes for {n_points} points each")
 
+        # Collect gain values per point across all routes
+        gain_matrix = []
+        for d in dfs:
+            if "gain" in d.columns:
+                gain_matrix.append(d["gain"].iloc[:n_points].to_numpy(dtype=float))
+            else:
+                # if no gain column, fill with NaN
+                gain_matrix.append(np.full(n_points, np.nan, dtype=float))
+        gain_matrix = np.array(gain_matrix)  # shape: (n_files, n_points)
+
+        # Compute per-point statistics: mean gain (linear)
+        mean_gains = np.nanmean(gain_matrix, axis=0)  # shape: (n_points,)
+
         # Use coordinates from first dataframe as marker positions
         ref_df = dfs[0]
 
@@ -533,8 +546,23 @@ class GlobalMap:
             except Exception:
                 continue
 
-            mcolor = "#888888"
-            mean_line = '<div style="margin-top:6px; color:#888;">Mean gain: N/A</div>'
+            # Compute mean gain for this point and colorize marker
+            mean_gain_val = mean_gains[i] if i < len(mean_gains) else np.nan
+            if np.isfinite(mean_gain_val):
+                mean_gain_pct = mean_gain_val * 100.0
+                mean_line = f'<div style="margin-top:6px; color:#2E86AB; font-weight:bold;">Mean gain: {mean_gain_pct:.2f}%</div>'
+                # Colorize marker: green for positive gain, red for negative, grey for near-zero
+                if mean_gain_val > 0.05:  # > 5%
+                    mcolor = "#28a745"  # green
+                elif mean_gain_val < -0.05:  # < -5%
+                    mcolor = "#dc3545"  # red
+                else:
+                    mcolor = "#ffc107"  # yellow/amber for small gains
+            else:
+                mean_line = (
+                    '<div style="margin-top:6px; color:#888;">Mean gain: N/A</div>'
+                )
+                mcolor = "#888888"
 
             popup_html = (
                 f"<div style='font-family: Arial; font-size:12px; width:90%; max-width:1400px; margin:0 auto;'><b>Point {i}</b><br>"
@@ -843,58 +871,6 @@ class GlobalMap:
         count_path = os.path.join(out_dir, f"count_heatmap_{option}.html")
         m_count.save(count_path)
         print(f"[INFO] Saved count heatmap to {count_path}")
-
-
-def get_windrose_from_route(route_df, output_name="route", ax=None):
-    """
-    Create windrose from route data with u10, v10 columns
-
-    Parameters:
-    route_df: DataFrame with columns ['LAT', 'LON', 'u10', 'v10']
-    output_name: name for output file
-    ax: matplotlib axis to plot on (for subplots)
-    """
-    # Extract u10 and v10 from the route dataframe
-    u10 = route_df["u10"].values
-    v10 = route_df["v10"].values
-
-    # Calculate wind speed and direction
-    wind_speed = np.sqrt(u10**2 + v10**2)
-    wind_direction = np.degrees(np.arctan2(-u10, -v10)) % 360
-
-    # Create windrose plot
-    if ax is None:
-        ax = WindroseAxes.from_ax()
-    else:
-        ax = WindroseAxes.from_ax(ax=ax)
-    plt.setp(ax.get_xticklabels(), fontsize=16)  # Ângulos (N, NE, E, etc.)
-    plt.setp(ax.get_yticklabels(), fontsize=14)  # Percentuais radiais
-
-    ax.bar(wind_direction, wind_speed, normed=True, opening=0.8, edgecolor="white")
-    ax.set_legend(fontsize=12, title_fontsize=14)
-    ax.set_title(f"{output_name}", fontsize=20)
-
-    return wind_speed, wind_direction, ax
-
-
-def process_single_trip(trip_file):
-    """Process a single trip file and return the mean gain"""
-    df_trip = pd.read_csv(trip_file, index_col=0)
-
-    filename = os.path.basename(trip_file)
-    pattern = (
-        r"wind_data_year_(\d{4})_month_(\d{1,2})_day_(\d{1,2})_hour_(\d{1,2})\.csv"
-    )
-    match = re.search(pattern, filename)
-
-    if match:
-        year, month, day, hour = map(int, match.groups())
-        timestamp = pd.Timestamp(year=year, month=month, day=day, hour=hour)
-    else:
-        print(f"[WARNING] Could not extract timestamp from {filename}")
-        timestamp = pd.NaT  # Not a Time
-
-    return {"gain": df_trip["gain"].mean(), "timestamp": timestamp}
 
 
 def main():

@@ -296,22 +296,12 @@ def main():
     # )
 
     # args = parser.parse_args()
-    files = glob.glob(r"D:\abdias_suez\route_csvs100\*.csv")
+    files = glob.glob(r"D:\castro_alves_afra\route_csvs100\*.csv")
     # Shuffle files so the selection at the same index samples different routes
-    random.shuffle(files)
+    # random.shuffle(files)
     # get_windrose_from_csvs_at_index(files[:1000], point=272)
     get_windrose_from_csvs_all(files)
     # get_windrose_from_csvs_all(files, option="return")
-    # if args.multiple:
-    #     plot_6_windroses()
-    # elif args.route_path:
-    #     route_df = pd.read_csv(args.route_path)
-    #     get_windrose_from_route(
-    #         route_df, output_name=os.path.basename(args.route_path).replace(".csv", "")
-    #     )
-    # else:
-    #     print("Please provide --route-path or use --multiple flag")
-    #     print("Example: python get_windrose.py --multiple")
 
 
 if __name__ == "__main__":

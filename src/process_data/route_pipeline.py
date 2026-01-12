@@ -547,8 +547,8 @@ if __name__ == "__main__":
     current_time = pd.Timestamp(f"{year}-{int(args.start_month)}-01 00:00:00")
     wind_csv = "data.csv"
 
-    forces_path = f"../{ship}/forces_CFD_v3.csv"
-    old_forces_path = f"../{ship}/forces_CFD_v2.csv"
+    forces_path = f"../{ship}/forces_CFD_rotores_desligados.csv"
+    old_forces_path = f"../{ship}/forces_CFD.csv"
     map_processer = ProcessMap(
         timestamp=current_time,
         route_path=f"../{ship}/ais/{wind_csv}",
