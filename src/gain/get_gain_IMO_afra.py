@@ -9,7 +9,7 @@ import sys
 sys.path.append(os.getcwd())
 import src.utils.plot_functions as pf
 
-
+# teste
 class GainIMO:
     def __init__(self, imo_data_path, ship, forces_data_path, draft, modified):
         self.imo_df = pd.read_csv(imo_data_path)
