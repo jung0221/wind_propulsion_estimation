@@ -524,7 +524,7 @@ class ProcessMap:
 
     def process_per_route(self):
         csv_path = f"D:/{ship}/route_csvs{self.rotation}/wind_data_year_{int(self.timestamp.year)}_month_{self.timestamp.month}_day_{self.timestamp.day}_hour_{self.timestamp.hour}.csv"
-
+                                #modificar
         if os.path.exists(csv_path):
             self.new_df = pd.read_csv(csv_path, sep=",")
         else:
@@ -532,7 +532,7 @@ class ProcessMap:
 
     def save_csv(self, timestamp, ship):
         csv_path = f"D:/{ship}/route_csvs{self.rotation}/wind_data_year_{timestamp.year}_month_{timestamp.month}_day_{timestamp.day}_hour_{timestamp.hour}.csv"
-        os.makedirs(os.path.dirname(csv_path), exist_ok=True)
+        os.makedirs(os.path.dirname(csv_path), exist_ok=True)       #modificar
         if not os.path.exists(csv_path):
             print(f"[INFO] Saving informations with start time: {timestamp} ..")
             self.new_df.to_csv(csv_path)
@@ -545,7 +545,7 @@ if __name__ == "__main__":
     parser.add_argument("--rotation", required=True, help="100 or 180")
     parser.add_argument("--start-month", required=True, help="Start month")
     parser.add_argument("--year", required=True, type=int, help="Year")
-
+    #parser.add_argument("--"    #modificar
     parser.add_argument(
         "--no-forces", action="store_true", help="Do not calculate forces"
     )
@@ -559,12 +559,12 @@ if __name__ == "__main__":
     current_time = pd.Timestamp(f"{year}-{int(args.start_month)}-01 00:00:00")
     wind_csv = "data.csv"
 
-    forces_path = f"../{ship}/forces_CFD_rotores_desligados.csv"
-    old_forces_path = f"../{ship}/forces_CFD.csv"
+    forces_path = f"../{ship}/forces_CFD_rotores_desligados.csv"        #modificar
+    old_forces_path = f"../{ship}/forces_CFD.csv"       #modificar
     map_processer = ProcessMap(
         timestamp=current_time,
-        route_path=f"../{ship}/ais/{wind_csv}",
-        wind_path=f"../{ship}/gribs_2020/{year}_1.grib",
+        route_path=f"../{ship}/ais/{wind_csv}",         #modificar
+        wind_path=f"../{ship}/gribs_2020/{year}_1.grib", #modificar
         forces_path=forces_path,
         old_forces_path=old_forces_path,
         ship=args.ship,
@@ -572,7 +572,7 @@ if __name__ == "__main__":
         calculate_forces=calculate_forces,
     )
     try:
-        for i in range(744 * 3):
+        for i in range(744 * 3): 
             print("Time starts: ", current_time)
             map_processer.timestamp = current_time
             map_processer.load_data()
@@ -595,3 +595,4 @@ if __name__ == "__main__":
         except Exception:
             pass
         gc.collect()
+#python .\src\process_data\route_pipeline_afra.py -s afra --rotation 100 --start-month 1 --year 2020
