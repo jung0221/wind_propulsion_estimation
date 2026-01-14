@@ -563,7 +563,7 @@ if __name__ == "__main__":
     old_forces_path = f"../{ship}/forces_CFD.csv"       #modificar
     map_processer = ProcessMap(
         timestamp=current_time,
-        route_path=f"../{ship}/ais/{wind_csv}",         #modificar
+        route_path=f"../data/{ship}/ais/{wind_csv}",         #modificar
         wind_path=f"../{ship}/gribs_2020/{year}_1.grib", #modificar
         forces_path=forces_path,
         old_forces_path=old_forces_path,
@@ -572,7 +572,7 @@ if __name__ == "__main__":
         calculate_forces=calculate_forces,
     )
     try:
-        for i in range(744 * 3): 
+        for i in range(744): 
             print("Time starts: ", current_time)
             map_processer.timestamp = current_time
             map_processer.load_data()

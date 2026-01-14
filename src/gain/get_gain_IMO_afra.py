@@ -48,7 +48,7 @@ class GainIMO:
             np.where(
                 self.thrust_df["Angulo"] <= 180,
                 180 - self.thrust_df["Angulo"],
-                540 - self.thrust_df["Angulo"],
+                540 - self.thrust_df["Angulo"], 
             )
             % 360
         )
@@ -652,7 +652,7 @@ def main():
 
     get_gain.plot_wind_profiles()
 
-    angles = np.arange(0, 150, 30)
+    angles = np.arange(180, 240, 30)   # Angles to compare forces (inicio, fim, passo)
     for angle in angles:
         pf.compare_forces_per_rotation(
             force_matrix, target_angles=[angle], vk_mats=vk_matrix, ang_mats=ang_matrix
@@ -662,3 +662,4 @@ def main():
 if __name__ == "__main__":
     main()
 #rodado apenas para 100RPM
+# python src/gain/get_gain_IMO_afra.py -s afra --cfd-data dados/castro_aleves_afra/forces_CFD.csv 
