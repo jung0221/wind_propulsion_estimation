@@ -3,11 +3,11 @@ import os
 
 dataset = "reanalysis-era5-single-levels"
 
-for i in range(1, 13):
+for i in range(1, 2):
     request = {
         "product_type": ["reanalysis"],
         "variable": ["10m_u_component_of_wind", "10m_v_component_of_wind"],
-        "year": ["2021"],
+        "year": ["2020"],
         "month": [str(i)],
         "day": [
             "01",
@@ -70,7 +70,7 @@ for i in range(1, 13):
         ],
         "data_format": "grib",
         "download_format": "unarchived",
-        "area": [30, -100, -30, -30],
+        "area": [28, -48, -38, 106],
     }
 
     # prepare output directory and filename as {YEAR}_{MONTH}.grib
