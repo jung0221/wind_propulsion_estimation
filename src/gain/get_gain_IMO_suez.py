@@ -102,7 +102,7 @@ class GainIMO:
         z_max=120.0,
         npoints=300,
         method="power",
-        alpha=1 / 7,
+        alpha=1 / 9,
         z0=0.03,
         z_ref=10.0,
         cmap="viridis",
@@ -655,8 +655,8 @@ def main():
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
-    imo_data_path = "../imo_guidance/global_prob_matrix.csv"
-    forces_data_path = f"../{ship}/forces_CFD_v2.csv"
+    imo_data_path = "../data/imo_guidance/global_prob_matrix.csv"
+    forces_data_path = f"../data/{ship}/forces_CFD_v2.csv"
     rotations = [100, 180]
     drafts = [8.5, 16]
     force_matrix = []
