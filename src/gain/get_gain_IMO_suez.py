@@ -77,8 +77,8 @@ class GainIMO:
 
         # Carregar dados para 100 RPM
         get_gain_100 = GainIMO(
-            imo_data_path="../imo_guidance/global_prob_matrix.csv",
-            forces_data_path=f"../{ship}/forces_CFD.csv",
+            imo_data_path="../data/imo_guidance/global_prob_matrix.csv",
+            forces_data_path=f"../data/{ship}/forces_CFD.csv",
             rotation=100,
             draft=self.draft,
         )
@@ -86,8 +86,8 @@ class GainIMO:
 
         # Carregar dados para 180 RPM
         get_gain_180 = GainIMO(
-            imo_data_path="../imo_guidance/global_prob_matrix.csv",
-            forces_data_path=f"../{ship}/forces_CFD.csv",
+            imo_data_path="../data/imo_guidance/global_prob_matrix.csv",
+            forces_data_path=f"../data/{ship}/forces_CFD.csv",
             rotation=180,
             draft=self.draft,
         )
@@ -655,8 +655,8 @@ def main():
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
-    imo_data_path = "../imo_guidance/global_prob_matrix.csv"
-    forces_data_path = f"../{ship}/forces_CFD_v2.csv"
+    imo_data_path = "../data/imo_guidance/global_prob_matrix.csv"
+    forces_data_path = f"../data/{ship}/forces_CFD.csv"
     rotations = [100, 180]
     drafts = [8.5, 16]
     force_matrix = []
@@ -690,3 +690,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# python src/gain/get_gain_imo_suez.py -s suez 
