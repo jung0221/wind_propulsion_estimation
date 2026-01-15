@@ -127,7 +127,7 @@ class GainIMO:
         fig, ax = plt.subplots(figsize=(8, 6))
 
         # rotor height used by extrapolated_wind_vel (same logic)
-        z_rotor = 27.7 if self.draft == 16.0 else 35.5
+        z_rotor = 27.7 if self.draft == 16.0 else 35.2
 
         for i, V10 in enumerate(v10_list):
             if method == "power":
