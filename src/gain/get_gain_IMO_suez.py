@@ -97,12 +97,12 @@ class GainIMO:
 
     def plot_wind_profiles(
         self,
-        v10_list=(5, 10, 15),
+        v10_list=(6, 10, 12),
         z_min=1.0,
         z_max=120.0,
         npoints=300,
         method="power",
-        alpha=1 / 7,
+        alpha=1 / 9,
         z0=0.03,
         z_ref=10.0,
         cmap="viridis",
@@ -165,7 +165,7 @@ class GainIMO:
                     c="k",
                     s=10,
                     alpha=0.6,
-                    label="Ponto médio do rotor ($T = 16m$)",
+                    label="Zref ($T = 16m$)",
                 )
             except Exception:
                 pass
@@ -194,7 +194,7 @@ class GainIMO:
         z_max=100.0,
         npoints=300,
         method="power",
-        alpha=1 / 7,
+        alpha=1 / 9,
         z0=0.03,
         z_ref=10.0,
         cmap="viridis",
@@ -553,7 +553,7 @@ class GainIMO:
 
     def extrapolated_wind_vel(self, v_10):
         z = (
-            27.7 if self.draft == 16.0 else 35.5
+            27.7 if self.draft == 16.0 else 35.2
         )  # 7.2 (Depth - Draft: 7.2 for design and 14.7 for ballast) + 3 (Base height) + 17.5 (Rotor height/2)
         alpha = 1 / 9
         return v_10 * np.power(z / 10, alpha)

@@ -78,8 +78,8 @@ class GainIMO:
 
         # Carregar dados para 100 RPM
         get_gain_100 = GainIMO(
-            imo_data_path="../imo_guidance/global_prob_matrix.csv",
-            forces_data_path=f"../{ship}/forces_CFD.csv",
+            imo_data_path="../data/imo_guidance/global_prob_matrix.csv",
+            forces_data_path=f"../data/{ship}/forces_CFD.csv",
             rotation=100,
             draft=self.draft,
         )
@@ -87,8 +87,8 @@ class GainIMO:
 
         # Carregar dados para 180 RPM
         get_gain_180 = GainIMO(
-            imo_data_path="../imo_guidance/global_prob_matrix.csv",
-            forces_data_path=f"../{ship}/forces_CFD.csv",
+            imo_data_path="../data/imo_guidance/global_prob_matrix.csv",
+            forces_data_path=f"../data/{ship}/forces_CFD.csv",
             rotation=180,
             draft=self.draft,
         )
@@ -628,7 +628,7 @@ def main():
     args = parser.parse_args()
     ship = "abdias_suez" if args.ship == "suez" else "castro_alves_afra"
 
-    imo_data_path = "data/global_prob_matrix.csv"
+    imo_data_path="../data/imo_guidance/global_prob_matrix.csv"
     forces_data_path = args.cfd_data
     drafts = [6.9, 15]
     force_matrix = []
@@ -662,4 +662,4 @@ def main():
 if __name__ == "__main__":
     main()
 #rodado apenas para 100RPM
-# python src/gain/get_gain_IMO_afra.py -s afra --cfd-data dados/castro_aleves_afra/forces_CFD.csv 
+# python src/gain/get_gain_IMO_afra.py -s afra --cfd-data ../dados/castro_aleves_afra/forces_CFD.csv 
